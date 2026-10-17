@@ -1,0 +1,87 @@
+# =============================================================================
+# Scribble — Android / Kotlin / Gradle / Firebase .gitignore
+# =============================================================================
+
+# Gradle local cache & build outputs (Note: gradle/ wrapper & *.gradle.kts are tracked!)
+.gradle/
+**/build/
+build/
+
+# Kotlin & compiler local caches
+.kotlin/
+
+# Android Studio / IntelliJ IDEA local configuration
+.idea/
+*.iml
+*.ipr
+*.iws
+.navigation/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local SDK & environment properties
+local.properties
+
+# Generated Android packages, bundles & obfuscation outputs
+*.apk
+*.aab
+*.ap_
+*.aab.idsig
+app/release/
+**/release/*.aab
+**/release/*.apk
+**/release/mapping.txt
+output-metadata.json
+
+# Signing keystores, private keys & local signing config
+*.jks
+*.keystore
+*.pem
+*.p12
+*.key
+keystore.properties
+signing.properties
+
+# Firebase & Google Cloud private credentials / client config / emulators / logs
+google-services.json
+app/google-services.json
+*service-account*.json
+*firebase-adminsdk*.json
+serviceAccountKey.json
+credentials.json
+.env
+.env.*
+*.local
+firebase-debug.log
+firebase-debug.*.log
+database-debug.log
+database-debug.*.log
+firestore-debug.log
+firestore-debug.*.log
+pubsub-debug.log
+ui-debug.log
+.firebase/
+
+# Node.js / Cloud Functions dependencies & compiled output
+node_modules/
+functions/node_modules/
+functions/lib/
+
+# Profiling, logs & temporary files
+*.log
+*.hprof
+*.trace
+temp_user_req.txt
+tmp/
+temp/
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini

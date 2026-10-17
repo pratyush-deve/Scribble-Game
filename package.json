@@ -1,0 +1,16 @@
+{
+  "name": "scribble",
+  "version": "1.0.0",
+  "description": "Scribble Realtime Database Security Tests",
+  "scripts": {
+    "test": "firebase emulators:exec \"node rules-tests/security-rules.test.js\"",
+    "test:rules": "firebase emulators:exec \"node rules-tests/security-rules.test.js\""
+  },
+  "keywords": [
+    "firebase",
+    "security-rules",
+    "rtdb"
+  ],
+  "author": "",
+  "license": "ISC"
+}

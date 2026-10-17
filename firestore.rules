@@ -1,0 +1,65 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isOwner(userId);
+
+      // Creating a new profile: must initialize stats to 0 and match authenticated UID
+      allow create: if isOwner(userId)
+        && request.resource.data.uid == userId
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() > 0
+        && request.resource.data.displayName.size() <= 25
+        && request.resource.data.avatarId is string
+        && (!('accountType' in request.resource.data) || request.resource.data.accountType in ['GUEST', 'PERMANENT'])
+        && (!('guestMatchesCompleted' in request.resource.data) || request.resource.data.guestMatchesCompleted == 0)
+        && (!('guestAccessStatus' in request.resource.data) || request.resource.data.guestAccessStatus == 'ACTIVE')
+        && (!('stats' in request.resource.data) || (
+          request.resource.data.stats.gamesPlayed == 0
+          && request.resource.data.stats.wins == 0
+          && request.resource.data.stats.losses == 0
+          && request.resource.data.stats.draws == 0
+          && request.resource.data.stats.totalScore == 0
+          && request.resource.data.stats.bestScore == 0
+          && request.resource.data.stats.winStreak == 0
+        ));
+
+      // Updating an existing profile: allow updating only displayName, avatarId, preferences, updatedAt, lastSeenAt
+      // Disallow client manipulation of stats, createdAt, uid, or guest match counters/status
+      allow update: if isOwner(userId)
+        && request.resource.data.uid == userId
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() > 0
+        && request.resource.data.displayName.size() <= 25
+        && request.resource.data.avatarId is string
+        && (!('stats' in resource.data) || request.resource.data.stats == resource.data.stats)
+        && (!('createdAt' in resource.data) || request.resource.data.createdAt == resource.data.createdAt)
+        && (!('guestMatchesCompleted' in resource.data) || request.resource.data.guestMatchesCompleted == resource.data.guestMatchesCompleted)
+        && (!('guestAccessStatus' in resource.data) || request.resource.data.guestAccessStatus == resource.data.guestAccessStatus)
+        && (!('accountType' in resource.data) 
+            || request.resource.data.accountType == resource.data.accountType 
+            || (resource.data.accountType == 'GUEST' && request.resource.data.accountType == 'PERMANENT'));
+
+      allow delete: if false;
+    }
+
+    match /matches/{matchId} {
+      // Only match participants can read the match record
+      allow read: if isAuthenticated() && (resource.data.playerUids.hasAny([request.auth.uid]));
+
+      // Clients can NEVER write, update, or delete matches.
+      // Trusted Cloud Functions using Firebase Admin SDK perform authoritative writes.
+      allow write: if false;
+    }
+  }
+}

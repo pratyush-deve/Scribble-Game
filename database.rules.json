@@ -1,0 +1,122 @@
+{
+  "rules": {
+    "roomCodes": {
+      ".read": "auth != null",
+      "$code": {
+        ".write": "auth != null && (!data.exists() || !newData.exists())",
+        ".validate": "newData.isString() && newData.val().length > 0"
+      }
+    },
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostId').val() === auth.uid) || (!newData.exists() && data.child('hostId').val() === auth.uid))",
+        "settings": {
+          ".write": "auth != null && data.parent().child('hostId').val() === auth.uid",
+          ".validate": "newData.hasChildren(['maxPlayers', 'rounds', 'drawTimeSeconds', 'wordDifficulty'])"
+        },
+        "status": {
+          ".write": "auth != null && data.parent().child('hostId').val() === auth.uid",
+          ".validate": "newData.isString() && (newData.val() === 'WAITING' || newData.val() === 'IN_PROGRESS' || newData.val() === 'FINISHED' || newData.val() === 'CLOSED')"
+        },
+        "players": {
+          "$playerId": {
+            ".write": "auth != null && ((!data.exists() && $playerId === auth.uid) || (!newData.exists() && ($playerId === auth.uid || data.parent().parent().child('hostId').val() === auth.uid)))",
+            ".validate": "!newData.exists() || (newData.hasChildren(['id', 'name', 'avatarId', 'isHost', 'score', 'joinedAt', 'isConnected']) && newData.child('id').val() === $playerId && (data.exists() || (newData.child('score').val() === 0 && (newData.child('isHost').val() === false || !data.parent().parent().exists() || data.parent().parent().child('hostId').val() === $playerId))))",
+            "name": {
+              ".write": "auth != null && $playerId === auth.uid",
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 30"
+            },
+            "avatarId": {
+              ".write": "auth != null && $playerId === auth.uid",
+              ".validate": "newData.isString() && newData.val().length > 0"
+            },
+            "isConnected": {
+              ".write": "auth != null && $playerId === auth.uid",
+              ".validate": "newData.isBoolean()"
+            },
+            "score": {
+              ".write": "false"
+            },
+            "isHost": {
+              ".write": "auth != null && data.parent().parent().parent().child('hostId').val() === auth.uid && newData.isBoolean()"
+            }
+          }
+        },
+        "drawing": {
+          "$turnId": {
+            "strokes": {
+              "$strokeId": {
+                ".write": "auth != null && root.child('rooms').child($roomId).child('gameState').child('drawerId').val() === auth.uid && root.child('rooms').child($roomId).child('gameState').child('phase').val() === 'DRAWING'"
+              }
+            },
+            "clearSeq": {
+              ".write": "auth != null && root.child('rooms').child($roomId).child('gameState').child('drawerId').val() === auth.uid && root.child('rooms').child($roomId).child('gameState').child('phase').val() === 'DRAWING'"
+            }
+          }
+        },
+        "chat": {
+          "$messageId": {
+            ".write": "auth != null && (!data.exists() || !newData.exists()) && newData.child('senderId').val() === auth.uid",
+            ".validate": "newData.hasChildren(['id', 'senderId', 'senderName', 'text', 'type', 'timestamp']) && newData.child('senderId').val() !== 'system' && newData.child('type').val() !== 'SYSTEM_INFO'"
+          }
+        },
+        "gameState": {
+          ".write": "auth != null && data.parent().child('hostId').val() === auth.uid",
+          "phase": {
+            ".write": "auth != null && ((data.parent().child('drawerId').val() === auth.uid && data.val() === 'SELECTING_WORD' && newData.val() === 'DRAWING') || data.parent().parent().child('hostId').val() === auth.uid)"
+          },
+          "round": {
+            ".write": "false"
+          },
+          "totalRounds": {
+            ".write": "false"
+          },
+          "turnNumber": {
+            ".write": "false"
+          },
+          "turnId": {
+            ".write": "false"
+          },
+          "drawerId": {
+            ".write": "false"
+          },
+          "turnDeadline": {
+            ".write": "auth != null && (data.parent().child('drawerId').val() === auth.uid || data.parent().parent().child('hostId').val() === auth.uid)"
+          },
+          "maskedWord": {
+            ".write": "auth != null && data.parent().child('drawerId').val() === auth.uid && data.parent().child('phase').val() === 'SELECTING_WORD'"
+          },
+          "wordLength": {
+            ".write": "auth != null && data.parent().child('drawerId').val() === auth.uid && data.parent().child('phase').val() === 'SELECTING_WORD'"
+          },
+          "wordHash": {
+            ".write": "auth != null && data.parent().child('drawerId').val() === auth.uid && data.parent().child('phase').val() === 'SELECTING_WORD'"
+          },
+          "revealedWord": {
+            ".write": "auth != null && (data.parent().child('drawerId').val() === auth.uid || data.parent().parent().child('hostId').val() === auth.uid)"
+          },
+          "correctGuessers": {
+            "$guesserId": {
+              ".write": "auth != null && $guesserId === auth.uid && !data.exists() && data.parent().parent().child('phase').val() === 'DRAWING' && data.parent().parent().child('drawerId').val() !== auth.uid"
+            }
+          },
+          "turnOrder": {
+            ".write": "false"
+          },
+          "clearSeq": {
+            ".write": "auth != null && (data.parent().child('drawerId').val() === auth.uid || data.parent().parent().child('hostId').val() === auth.uid)"
+          }
+        }
+      }
+    },
+    "gameSecrets": {
+      "$roomId": {
+        "$playerId": {
+          ".read": "auth != null && auth.uid === $playerId",
+          ".write": "auth != null && auth.uid === $playerId"
+        }
+      }
+    }
+  }
+}
