@@ -46,6 +46,7 @@ class FirebaseGameRepository(
 
     private val roomsRef: DatabaseReference = database.getReference("rooms")
     private val secretsRef: DatabaseReference = database.getReference("gameSecrets")
+    private val usedWordIdsByRoom = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
 
     companion object {
         private const val TAG = "FirebaseGameRepository"
@@ -454,12 +455,31 @@ class FirebaseGameRepository(
         secretRef.addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val existing = snapshot.getValue(FirebaseDrawerSecretDto::class.java)
+                val roomUsedSet = usedWordIdsByRoom.getOrPut(roomId) {
+                    java.util.Collections.synchronizedSet(mutableSetOf())
+                }
+                existing?.wordChoices?.forEach { choice ->
+                    if (choice.id.isNotBlank()) {
+                        roomUsedSet.add(choice.id)
+                    }
+                }
+
                 if (existing != null && existing.turnId == turnId && existing.wordChoices.isNotEmpty()) {
                     cont.resume(AppResult.Success(Unit))
                     return
                 }
 
-                val choices = wordBankDataSource.getChoices(difficulty, count = 3)
+                val excludedIds = synchronized(roomUsedSet) { roomUsedSet.toSet() }
+                val choices = wordBankDataSource.getChoices(
+                    difficulty = difficulty,
+                    count = 3,
+                    excludeWordIds = excludedIds
+                )
+                choices.forEach { choice ->
+                    if (choice.id.isNotBlank()) {
+                        roomUsedSet.add(choice.id)
+                    }
+                }
                 val secretDto = FirebaseDrawerSecretDto(
                     turnId = turnId,
                     drawerId = drawerId,

@@ -53,6 +53,7 @@ class GameViewModel(
     private val hasAdvancedToWordSelection = java.util.concurrent.atomic.AtomicBoolean(false)
     private val isAdvancingTurn = java.util.concurrent.atomic.AtomicBoolean(false)
     private var lastRevealedTurnId: String = ""
+    private var roomDifficulty: WordDifficulty = WordDifficulty.MEDIUM
 
     val localPlayerId: String = authRepository?.currentUser?.value?.id ?: "p1"
 
@@ -149,6 +150,7 @@ class GameViewModel(
                     if (room != null) {
                         val activePlayers = room.players
                         val isHost = room.hostId == localPlayerId
+                        roomDifficulty = room.settings.wordDifficulty
 
                         _gameUiState.update { current ->
                             current.copy(
@@ -294,7 +296,7 @@ class GameViewModel(
                     roomId = roomId,
                     turnId = snapshot.turnId,
                     drawerId = localPlayerId,
-                    difficulty = WordDifficulty.MEDIUM
+                    difficulty = roomDifficulty
                 )
             }
         }
@@ -691,7 +693,7 @@ class GameViewModel(
                     roomId = roomId,
                     drawerId = localPlayerId,
                     selectedWord = word,
-                    difficulty = WordDifficulty.MEDIUM,
+                    difficulty = roomDifficulty,
                     drawTimeSeconds = drawTime
                 )
             }
