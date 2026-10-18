@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pratyush.scribble.core.designsystem.component.ScribblePrimaryButton
 import com.pratyush.scribble.core.designsystem.theme.DarkSurface
+import com.pratyush.scribble.core.designsystem.theme.ErrorRed
 import com.pratyush.scribble.core.designsystem.theme.TextPrimary
 import com.pratyush.scribble.core.designsystem.theme.TextSecondary
 import com.pratyush.scribble.core.designsystem.theme.VibrantCyan
@@ -33,7 +34,8 @@ import com.pratyush.scribble.core.designsystem.theme.VibrantViolet
 fun GuestLimitDialog(
     isLoading: Boolean,
     onUpgradeClicked: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    errorMessage: String? = null
 ) {
     AlertDialog(
         onDismissRequest = { if (!isLoading) onDismiss() },
@@ -81,6 +83,15 @@ fun GuestLimitDialog(
                     textAlign = TextAlign.Center,
                     lineHeight = 22.sp
                 )
+                if (!errorMessage.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ErrorRed,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         },
         confirmButton = {
@@ -104,3 +115,4 @@ fun GuestLimitDialog(
         }
     )
 }
+

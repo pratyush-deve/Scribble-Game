@@ -400,7 +400,8 @@ fun HomeScreen(
             GuestLimitDialog(
                 isLoading = uiState.isLinkingAccount,
                 onUpgradeClicked = onUpgradeToGoogleClicked,
-                onDismiss = onDismissGuestLimitDialog
+                onDismiss = onDismissGuestLimitDialog,
+                errorMessage = uiState.errorMessage
             )
         }
     }

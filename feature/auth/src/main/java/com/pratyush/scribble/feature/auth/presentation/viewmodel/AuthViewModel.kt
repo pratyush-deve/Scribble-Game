@@ -1,5 +1,6 @@
 package com.pratyush.scribble.feature.auth.presentation.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pratyush.scribble.core.common.result.AppResult
@@ -28,12 +29,18 @@ class AuthViewModel(
         }
     }
 
-    fun onGoogleSignInClicked() {
+    fun onGoogleSignInClicked(activityContext: Context? = null) {
+        if (_uiState.value.isLoading) return
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            when (val result = authRepository.signInWithGoogle()) {
+            val result = if (activityContext != null) {
+                authRepository.signInWithGoogle(activityContext)
+            } else {
+                authRepository.signInWithGoogle()
+            }
+            when (result) {
                 is AppResult.Success -> {
-                    _uiState.update { it.copy(isLoading = false, authenticatedUser = result.data) }
+                    _uiState.update { it.copy(isLoading = false, authenticatedUser = result.data, errorMessage = null) }
                 }
                 is AppResult.Error -> {
                     _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
@@ -44,11 +51,12 @@ class AuthViewModel(
     }
 
     fun onGuestSignInClicked(name: String) {
+        if (_uiState.value.isLoading) return
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             when (val result = authRepository.signInAsGuest(name)) {
                 is AppResult.Success -> {
-                    _uiState.update { it.copy(isLoading = false, authenticatedUser = result.data) }
+                    _uiState.update { it.copy(isLoading = false, authenticatedUser = result.data, errorMessage = null) }
                 }
                 is AppResult.Error -> {
                     _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
@@ -62,3 +70,4 @@ class AuthViewModel(
         _uiState.update { it.copy(errorMessage = null) }
     }
 }
+

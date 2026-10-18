@@ -78,12 +78,13 @@ fun ScribbleNavHost(
             SplashScreen()
         }
         composable<ScreenDestination.Auth> {
+            val activityContext = LocalContext.current
             val authViewModel = viewModel { AuthViewModel(authRepository) }
             val uiState by authViewModel.uiState.collectAsStateWithLifecycle()
 
             AuthScreen(
                 uiState = uiState,
-                onGoogleSignInClicked = authViewModel::onGoogleSignInClicked,
+                onGoogleSignInClicked = { authViewModel.onGoogleSignInClicked(activityContext) },
                 onGuestSignInClicked = authViewModel::onGuestSignInClicked,
                 onNavigateToHome = {
                     navController.navigate(ScreenDestination.Home) {
@@ -94,6 +95,7 @@ fun ScribbleNavHost(
         }
 
         composable<ScreenDestination.Home> {
+            val activityContext = LocalContext.current
             val homeViewModel = viewModel { HomeViewModel(authRepository, roomRepository, profileRepository) }
             val uiState by homeViewModel.uiState.collectAsStateWithLifecycle()
 
@@ -116,7 +118,7 @@ fun ScribbleNavHost(
                     }
                 },
                 onDismissDialogs = homeViewModel::onDismissDialogs,
-                onUpgradeToGoogleClicked = homeViewModel::onUpgradeToGoogleClicked,
+                onUpgradeToGoogleClicked = { homeViewModel.onUpgradeToGoogleClicked(activityContext) },
                 onDismissGuestLimitDialog = homeViewModel::onDismissGuestLimitDialog
             )
         }

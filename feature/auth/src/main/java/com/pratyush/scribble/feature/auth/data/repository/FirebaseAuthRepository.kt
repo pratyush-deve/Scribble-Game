@@ -1,5 +1,7 @@
 package com.pratyush.scribble.feature.auth.data.repository
 
+import android.content.Context
+import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseUser
@@ -11,6 +13,7 @@ import com.pratyush.scribble.core.model.AvatarId
 import com.pratyush.scribble.core.model.UserProfile
 import com.pratyush.scribble.core.network.repository.ProfileRepository
 import com.pratyush.scribble.feature.auth.domain.repository.AuthRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,10 +29,22 @@ import kotlinx.coroutines.withContext
  */
 class FirebaseAuthRepository(
     private val firebaseAuth: FirebaseAuth = FirebaseAuth.getInstance(),
-    private val googleIdTokenSource: suspend () -> AppResult<String>,
+    private val googleIdTokenSource: suspend (Context?) -> AppResult<String>,
     private val profileRepository: ProfileRepository? = null,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
 ) : AuthRepository {
+
+    constructor(
+        firebaseAuth: FirebaseAuth = FirebaseAuth.getInstance(),
+        googleIdTokenSource: suspend () -> AppResult<String>,
+        profileRepository: ProfileRepository? = null,
+        scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
+    ) : this(
+        firebaseAuth = firebaseAuth,
+        googleIdTokenSource = { _ -> googleIdTokenSource() },
+        profileRepository = profileRepository,
+        scope = scope
+    )
 
     private val initialUser: FirebaseUser? = firebaseAuth.currentUser
     private val initialProfile: UserProfile? = initialUser?.toUserProfile()
@@ -81,19 +96,29 @@ class FirebaseAuthRepository(
         }
     }
 
-    override suspend fun signInWithGoogle(): AppResult<UserProfile> = withContext(Dispatchers.IO) {
+    override suspend fun signInWithGoogle(): AppResult<UserProfile> = signInWithGoogleInternal(null)
+
+    override suspend fun signInWithGoogle(activityContext: Context): AppResult<UserProfile> =
+        signInWithGoogleInternal(activityContext)
+
+    private suspend fun signInWithGoogleInternal(activityContext: Context?): AppResult<UserProfile> = withContext(Dispatchers.IO) {
         val currentFirebaseUser = firebaseAuth.currentUser
         if (currentFirebaseUser != null && currentFirebaseUser.isAnonymous) {
             // Already logged in as an anonymous guest: link credentials to preserve guest UID!
-            return@withContext linkGuestWithGoogle()
+            return@withContext linkGuestWithGoogleInternal(activityContext)
         }
 
-        val tokenResult = googleIdTokenSource()
+        val tokenResult = googleIdTokenSource(activityContext)
         if (tokenResult !is AppResult.Success) {
             return@withContext AppResult.Error((tokenResult as? AppResult.Error)?.message ?: "Failed to retrieve Google ID token")
         }
 
-        val idToken = tokenResult.data
+        val idToken = tokenResult.data.trim()
+        if (idToken.isEmpty()) {
+            logE("Firebase Google sign-in aborted: idToken is blank")
+            return@withContext AppResult.Error("Received an empty Google Sign-In token. Please try again.")
+        }
+
         try {
             val credential = GoogleAuthProvider.getCredential(idToken, null)
             val authResult = firebaseAuth.signInWithCredential(credential).await()
@@ -117,10 +142,14 @@ class FirebaseAuthRepository(
                 _authState.value = AuthState.Authenticated(profile)
                 AppResult.Success(profile)
             } else {
+                logE("Firebase signInWithCredential succeeded but user was null")
                 AppResult.Error("Firebase sign-in completed but user profile was null")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            AppResult.Error(e.localizedMessage ?: "Firebase Google sign-in failed")
+            logE("Firebase Google sign-in failed (${e::class.java.simpleName})")
+            AppResult.Error(e.localizedMessage ?: "Firebase Google sign-in failed", e)
         }
     }
 
@@ -162,28 +191,40 @@ class FirebaseAuthRepository(
             } else {
                 AppResult.Error("Anonymous sign-in completed but user was null")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            AppResult.Error(e.localizedMessage ?: "Guest sign-in failed")
+            logE("Guest sign-in failed (${e::class.java.simpleName})")
+            AppResult.Error(e.localizedMessage ?: "Guest sign-in failed", e)
         }
     }
 
-    override suspend fun linkGuestWithGoogle(): AppResult<UserProfile> = withContext(Dispatchers.IO) {
+    override suspend fun linkGuestWithGoogle(): AppResult<UserProfile> = linkGuestWithGoogleInternal(null)
+
+    override suspend fun linkGuestWithGoogle(activityContext: Context): AppResult<UserProfile> =
+        linkGuestWithGoogleInternal(activityContext)
+
+    private suspend fun linkGuestWithGoogleInternal(activityContext: Context?): AppResult<UserProfile> = withContext(Dispatchers.IO) {
         val currentUser = firebaseAuth.currentUser
             ?: return@withContext AppResult.Error("No user currently signed in")
 
-        val tokenResult = googleIdTokenSource()
+        if (!currentUser.isAnonymous) {
+            return@withContext signInWithGoogleInternal(activityContext)
+        }
+
+        val tokenResult = googleIdTokenSource(activityContext)
         if (tokenResult !is AppResult.Success) {
             return@withContext AppResult.Error((tokenResult as? AppResult.Error)?.message ?: "Failed to retrieve Google ID token")
         }
 
-        val idToken = tokenResult.data
-        val credential = GoogleAuthProvider.getCredential(idToken, null)
-
-        if (!currentUser.isAnonymous) {
-            return@withContext signInWithGoogle()
+        val idToken = tokenResult.data.trim()
+        if (idToken.isEmpty()) {
+            logE("Guest-to-Google linking aborted: idToken is blank")
+            return@withContext AppResult.Error("Received an empty Google Sign-In token. Please try again.")
         }
 
         try {
+            val credential = GoogleAuthProvider.getCredential(idToken, null)
             val linkResult = currentUser.linkWithCredential(credential).await()
             val linkedUser = linkResult.user ?: currentUser
             val uid = linkedUser.uid
@@ -207,7 +248,9 @@ class FirebaseAuthRepository(
         } catch (collisionEx: FirebaseAuthUserCollisionException) {
             // Account collision: Google account is already linked to another Firebase user.
             // Requirement 6: Handle collision gracefully, do not delete or overwrite either account, sign into the existing Google account.
+            logW("Account collision during guest upgrade (${collisionEx::class.java.simpleName}); signing into existing Google account")
             try {
+                val credential = GoogleAuthProvider.getCredential(idToken, null)
                 val authResult = firebaseAuth.signInWithCredential(credential).await()
                 val existingUser = authResult.user
                 if (existingUser != null) {
@@ -231,11 +274,17 @@ class FirebaseAuthRepository(
                 } else {
                     AppResult.Error("Failed to sign into existing account")
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                AppResult.Error(e.localizedMessage ?: "Failed to sign into existing Google account")
+                logE("Failed to sign into existing Google account after collision (${e::class.java.simpleName})")
+                AppResult.Error(e.localizedMessage ?: "Failed to sign into existing Google account", e)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            AppResult.Error(e.localizedMessage ?: "Failed to link Google account")
+            logE("Failed to link Google account (${e::class.java.simpleName})")
+            AppResult.Error(e.localizedMessage ?: "Failed to link Google account", e)
         }
     }
 
@@ -260,8 +309,11 @@ class FirebaseAuthRepository(
             _currentUser.value = null
             _authState.value = AuthState.Unauthenticated
             AppResult.Success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            AppResult.Error(e.localizedMessage ?: "Failed to sign out")
+            logE("Sign out failed (${e::class.java.simpleName})")
+            AppResult.Error(e.localizedMessage ?: "Failed to sign out", e)
         }
     }
 
@@ -277,8 +329,11 @@ class FirebaseAuthRepository(
             } else {
                 AppResult.Error("Retrieved empty Firebase ID token")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            AppResult.Error(e.localizedMessage ?: "Failed to retrieve Firebase ID token")
+            logE("Failed to retrieve Firebase ID token (${e::class.java.simpleName})")
+            AppResult.Error(e.localizedMessage ?: "Failed to retrieve Firebase ID token", e)
         }
     }
 
@@ -293,4 +348,17 @@ class FirebaseAuthRepository(
             accountType = accountType
         )
     }
+
+    companion object {
+        private const val TAG = "FirebaseAuthRepository"
+
+        private fun logW(message: String) {
+            runCatching { Log.w(TAG, message) }
+        }
+
+        private fun logE(message: String) {
+            runCatching { Log.e(TAG, message) }
+        }
+    }
 }
+

@@ -126,18 +126,50 @@ class AuthViewModelTest {
         assertNull(viewModel.uiState.value.errorMessage)
     }
 
+    @Test
+    fun `rapid repeated taps on google sign in do not trigger duplicate repository calls while loading`() = runTest {
+        val expectedUser = UserProfile(id = "user_123", displayName = "GoogleUser", avatarId = AvatarId.FOX)
+        fakeAuthRepository.googleSignInResult = AppResult.Success(expectedUser)
+
+        viewModel.onGoogleSignInClicked()
+        viewModel.onGoogleSignInClicked()
+        viewModel.onGoogleSignInClicked()
+        advanceUntilIdle()
+
+        assertEquals(1, fakeAuthRepository.googleSignInCallCount)
+        assertEquals(expectedUser, viewModel.uiState.value.authenticatedUser)
+        assertFalse(viewModel.uiState.value.isLoading)
+    }
+
+    @Test
+    fun `rapid repeated taps on guest sign in do not trigger duplicate repository calls while loading`() = runTest {
+        val guestUser = UserProfile(id = "guest_1", displayName = "SpeedyDoodler", avatarId = AvatarId.CAT)
+        fakeAuthRepository.guestSignInResult = AppResult.Success(guestUser)
+
+        viewModel.onGuestSignInClicked("SpeedyDoodler")
+        viewModel.onGuestSignInClicked("SpeedyDoodler")
+        advanceUntilIdle()
+
+        assertEquals(1, fakeAuthRepository.guestSignInCallCount)
+        assertEquals(guestUser, viewModel.uiState.value.authenticatedUser)
+        assertFalse(viewModel.uiState.value.isLoading)
+    }
+
     private class FakeAuthRepository : AuthRepository {
         private val _currentUser = MutableStateFlow<UserProfile?>(null)
         override val currentUser: StateFlow<UserProfile?> = _currentUser.asStateFlow()
 
         var googleSignInResult: AppResult<UserProfile> = AppResult.Error("Not configured")
         var guestSignInResult: AppResult<UserProfile> = AppResult.Error("Not configured")
+        var googleSignInCallCount: Int = 0
+        var guestSignInCallCount: Int = 0
 
         fun setCurrentUser(user: UserProfile?) {
             _currentUser.value = user
         }
 
         override suspend fun signInWithGoogle(): AppResult<UserProfile> {
+            googleSignInCallCount++
             if (googleSignInResult is AppResult.Success) {
                 _currentUser.value = (googleSignInResult as AppResult.Success<UserProfile>).data
             }
@@ -145,6 +177,7 @@ class AuthViewModelTest {
         }
 
         override suspend fun signInAsGuest(displayName: String): AppResult<UserProfile> {
+            guestSignInCallCount++
             if (guestSignInResult is AppResult.Success) {
                 _currentUser.value = (guestSignInResult as AppResult.Success<UserProfile>).data
             }
@@ -166,3 +199,4 @@ class AuthViewModelTest {
         }
     }
 }
+

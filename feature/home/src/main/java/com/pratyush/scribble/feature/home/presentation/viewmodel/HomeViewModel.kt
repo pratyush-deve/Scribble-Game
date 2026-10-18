@@ -1,5 +1,6 @@
 package com.pratyush.scribble.feature.home.presentation.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pratyush.scribble.core.common.result.AppResult
@@ -79,7 +80,7 @@ class HomeViewModel(
     }
 
     fun onDismissGuestLimitDialog() {
-        _uiState.update { it.copy(isGuestLimitDialogOpen = false) }
+        _uiState.update { it.copy(isGuestLimitDialogOpen = false, errorMessage = null) }
     }
 
     fun onDismissDialogs() {
@@ -97,17 +98,26 @@ class HomeViewModel(
         }
     }
 
-    fun onUpgradeToGoogleClicked(onSuccess: () -> Unit = {}) {
+    fun onUpgradeToGoogleClicked(
+        activityContext: Context? = null,
+        onSuccess: () -> Unit = {}
+    ) {
         if (_uiState.value.isLinkingAccount) return
+        _uiState.update { it.copy(isLinkingAccount = true, errorMessage = null) }
         viewModelScope.launch {
-            _uiState.update { it.copy(isLinkingAccount = true, errorMessage = null) }
-            when (val result = authRepository.linkGuestWithGoogle()) {
+            val result = if (activityContext != null) {
+                authRepository.linkGuestWithGoogle(activityContext)
+            } else {
+                authRepository.linkGuestWithGoogle()
+            }
+            when (result) {
                 is AppResult.Success -> {
                     _uiState.update {
                         it.copy(
                             isLinkingAccount = false,
                             isGuestLimitDialogOpen = false,
-                            userProfile = result.data
+                            userProfile = result.data,
+                            errorMessage = null
                         )
                     }
                     onSuccess()

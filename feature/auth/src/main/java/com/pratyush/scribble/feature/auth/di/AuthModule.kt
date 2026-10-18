@@ -1,7 +1,9 @@
 package com.pratyush.scribble.feature.auth.di
 
 import android.content.Context
+import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
+import com.pratyush.scribble.core.common.result.AppResult
 import com.pratyush.scribble.core.network.repository.ProfileRepository
 import com.pratyush.scribble.feature.auth.data.repository.FirebaseAuthRepository
 import com.pratyush.scribble.feature.auth.data.service.CredentialManagerGoogleIdTokenProvider
@@ -12,6 +14,8 @@ import com.pratyush.scribble.feature.auth.domain.repository.AuthRepository
  * This preserves clean architectural boundaries so `:app` doesn't need direct Firebase SDK dependencies.
  */
 object AuthModule {
+    private const val TAG = "AuthModule"
+
     @Volatile
     private var instance: AuthRepository? = null
 
@@ -27,21 +31,35 @@ object AuthModule {
     }
 
     private fun createAuthRepository(
-        context: Context,
+        appContext: Context,
         profileRepository: ProfileRepository?
     ): AuthRepository {
-        val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+        val resId = appContext.resources.getIdentifier(
+            "default_web_client_id",
+            "string",
+            appContext.packageName
+        )
         val webClientId = if (resId != 0) {
-            context.getString(resId)
+            appContext.getString(resId).trim()
         } else {
+            runCatching {
+                Log.e(TAG, "default_web_client_id resource not found in package ${appContext.packageName}")
+            }
             ""
         }
 
         val googleIdTokenProvider = CredentialManagerGoogleIdTokenProvider(webClientId)
         return FirebaseAuthRepository(
             firebaseAuth = FirebaseAuth.getInstance(),
-            googleIdTokenSource = {
-                googleIdTokenProvider.getGoogleIdToken(context)
+            googleIdTokenSource = { activityContext ->
+                if (activityContext == null) {
+                    runCatching {
+                        Log.e(TAG, "Google Sign-In requested without an Activity Context")
+                    }
+                    AppResult.Error("Google Sign-In requires an active screen context. Please try again.")
+                } else {
+                    googleIdTokenProvider.getGoogleIdToken(activityContext)
+                }
             },
             profileRepository = profileRepository
         )
@@ -51,3 +69,4 @@ object AuthModule {
         instance = repository
     }
 }
+
