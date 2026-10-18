@@ -200,6 +200,45 @@ class ProfileRepositoryTest {
         assertTrue((eligibility as AppResult.Success).data)
     }
 
+    @Test
+    fun `runFirestoreOperation rethrows CancellationException without logging error`() {
+        var loggedMessage: String? = null
+        var caughtCancellation: kotlinx.coroutines.CancellationException? = null
+
+        try {
+            FirestoreProfileRepository.runFirestoreOperation<UserProfile>(
+                errorLogMessage = "Error in getOrCreateProfile for uid_123",
+                defaultErrorMessage = "Failed to get or create profile",
+                onErrorLog = { msg, _ -> loggedMessage = msg }
+            ) {
+                throw kotlinx.coroutines.CancellationException("Job was cancelled")
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            caughtCancellation = e
+        }
+
+        assertNotNull(caughtCancellation)
+        assertEquals("Job was cancelled", caughtCancellation?.message)
+        org.junit.Assert.assertNull(loggedMessage)
+    }
+
+    @Test
+    fun `runFirestoreOperation logs and returns AppResult Error for non-cancellation exceptions`() {
+        var loggedMessage: String? = null
+
+        val result = FirestoreProfileRepository.runFirestoreOperation<UserProfile>(
+            errorLogMessage = "Error in getOrCreateProfile for uid_123",
+            defaultErrorMessage = "Failed to get or create profile",
+            onErrorLog = { msg, _ -> loggedMessage = msg }
+        ) {
+            throw IllegalStateException("Firestore unavailable")
+        }
+
+        assertTrue(result is AppResult.Error)
+        assertEquals("Firestore unavailable", (result as AppResult.Error).message)
+        assertEquals("Error in getOrCreateProfile for uid_123", loggedMessage)
+    }
+
     private class InMemoryProfileRepository : ProfileRepository {
         private val profiles = mutableMapOf<String, MutableStateFlow<UserProfile?>>()
         private val matches = mutableListOf<MatchRecord>()

@@ -155,12 +155,38 @@ class AuthViewModelTest {
         assertFalse(viewModel.uiState.value.isLoading)
     }
 
+    @Test
+    fun `intermediate currentUser emission while signInWithGoogle is in flight does not prematurely set authenticatedUser`() = runTest {
+        val rawFirebaseProfile = UserProfile(id = "user_123", displayName = "Player_user", avatarId = AvatarId.CAT)
+        val initializedFirestoreProfile = UserProfile(id = "user_123", displayName = "CustomName", avatarId = AvatarId.PANDA)
+        val completionDeferred = kotlinx.coroutines.CompletableDeferred<AppResult<UserProfile>>()
+        fakeAuthRepository.onSignInWithGoogle = {
+            // Simulate early emission before profile initialization finishes
+            fakeAuthRepository.setCurrentUser(rawFirebaseProfile)
+            completionDeferred.await()
+        }
+
+        viewModel.onGoogleSignInClicked()
+        testDispatcher.scheduler.runCurrent()
+
+        // Must remain loading with null authenticatedUser so AuthScreen does not navigate early and cancel viewModelScope
+        assertTrue(viewModel.uiState.value.isLoading)
+        assertNull(viewModel.uiState.value.authenticatedUser)
+
+        completionDeferred.complete(AppResult.Success(initializedFirestoreProfile))
+        advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.isLoading)
+        assertEquals(initializedFirestoreProfile, viewModel.uiState.value.authenticatedUser)
+    }
+
     private class FakeAuthRepository : AuthRepository {
         private val _currentUser = MutableStateFlow<UserProfile?>(null)
         override val currentUser: StateFlow<UserProfile?> = _currentUser.asStateFlow()
 
         var googleSignInResult: AppResult<UserProfile> = AppResult.Error("Not configured")
         var guestSignInResult: AppResult<UserProfile> = AppResult.Error("Not configured")
+        var onSignInWithGoogle: (suspend () -> AppResult<UserProfile>)? = null
         var googleSignInCallCount: Int = 0
         var guestSignInCallCount: Int = 0
 
@@ -170,6 +196,14 @@ class AuthViewModelTest {
 
         override suspend fun signInWithGoogle(): AppResult<UserProfile> {
             googleSignInCallCount++
+            val customHandler = onSignInWithGoogle
+            if (customHandler != null) {
+                val res = customHandler()
+                if (res is AppResult.Success) {
+                    _currentUser.value = res.data
+                }
+                return res
+            }
             if (googleSignInResult is AppResult.Success) {
                 _currentUser.value = (googleSignInResult as AppResult.Success<UserProfile>).data
             }

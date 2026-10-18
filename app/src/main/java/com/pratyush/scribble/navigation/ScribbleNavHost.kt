@@ -11,6 +11,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.toRoute
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.pratyush.scribble.R
 import com.pratyush.scribble.core.model.AuthState
 import com.pratyush.scribble.core.navigation.ScreenDestination
 import com.pratyush.scribble.feature.auth.di.AuthModule
@@ -35,12 +37,17 @@ fun ScribbleNavHost(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val webClientId = stringResource(R.string.default_web_client_id)
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     val profileRepository = androidx.compose.runtime.remember {
         com.pratyush.scribble.core.network.di.NetworkModule.provideProfileRepository()
     }
-    val authRepository = androidx.compose.runtime.remember(context, profileRepository) {
-        AuthModule.provideAuthRepository(context, profileRepository)
+    val authRepository = androidx.compose.runtime.remember(context, profileRepository, webClientId) {
+        AuthModule.provideAuthRepository(
+            context = context,
+            profileRepository = profileRepository,
+            webClientId = webClientId
+        )
     }
     val roomRepository = androidx.compose.runtime.remember {
         com.pratyush.scribble.core.network.di.NetworkModule.provideRoomRepository()

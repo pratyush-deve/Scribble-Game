@@ -24,7 +24,9 @@ class AuthViewModel(
     init {
         viewModelScope.launch {
             authRepository.currentUser.collect { user ->
-                _uiState.update { it.copy(authenticatedUser = user) }
+                if (!_uiState.value.isLoading || user == null) {
+                    _uiState.update { it.copy(authenticatedUser = user) }
+                }
             }
         }
     }

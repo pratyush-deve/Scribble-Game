@@ -12,6 +12,7 @@ import com.pratyush.scribble.core.model.MatchRecord
 import com.pratyush.scribble.core.model.UserPreferences
 import com.pratyush.scribble.core.model.UserProfile
 import com.pratyush.scribble.core.model.UserStats
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -28,12 +29,12 @@ class FirestoreProfileRepository(
 
     override suspend fun getProfile(uid: String): AppResult<UserProfile?> = withContext(Dispatchers.IO) {
         if (uid.isBlank()) return@withContext AppResult.Error("User ID cannot be blank")
-        try {
+        runFirestoreOperation(
+            errorLogMessage = "Error fetching profile for $uid",
+            defaultErrorMessage = "Failed to load profile"
+        ) {
             val snapshot = usersCollection.document(uid).get().await()
             AppResult.Success(snapshot.toUserProfile())
-        } catch (e: Exception) {
-            Log.e(TAG, "Error fetching profile for $uid", e)
-            AppResult.Error(e.localizedMessage ?: "Failed to load profile")
         }
     }
 
@@ -45,7 +46,10 @@ class FirestoreProfileRepository(
         accountType: AccountType
     ): AppResult<UserProfile> = withContext(Dispatchers.IO) {
         if (uid.isBlank()) return@withContext AppResult.Error("User ID cannot be blank")
-        try {
+        runFirestoreOperation(
+            errorLogMessage = "Error in getOrCreateProfile for $uid",
+            defaultErrorMessage = "Failed to get or create profile"
+        ) {
             val docRef = usersCollection.document(uid)
             val snapshot = docRef.get().await()
 
@@ -53,8 +57,9 @@ class FirestoreProfileRepository(
                 val profile = snapshot.toUserProfile()
                 if (profile != null) {
                     // Update lastSeenAt without touching custom name, avatar, or stats
-                    docRef.update("lastSeenAt", System.currentTimeMillis()).await()
-                    return@withContext AppResult.Success(profile.copy(lastSeenAt = System.currentTimeMillis()))
+                    val now = System.currentTimeMillis()
+                    docRef.update("lastSeenAt", now).await()
+                    return@runFirestoreOperation AppResult.Success(profile.copy(lastSeenAt = now))
                 }
             }
 
@@ -87,6 +92,9 @@ class FirestoreProfileRepository(
                     "soundEnabled" to initialPreferences.soundEnabled
                 )
             )
+            if (!email.isNullOrBlank()) {
+                data["email"] = email
+            }
 
             docRef.set(data).await()
 
@@ -105,9 +113,6 @@ class FirestoreProfileRepository(
                 preferences = initialPreferences
             )
             AppResult.Success(created)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in getOrCreateProfile for $uid", e)
-            AppResult.Error(e.localizedMessage ?: "Failed to get or create profile")
         }
     }
 
@@ -121,7 +126,7 @@ class FirestoreProfileRepository(
         val listenerRegistration = usersCollection.document(uid)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    Log.w(TAG, "Listen failed for user profile $uid", error)
+                    logW("Listen failed for user profile $uid", error)
                     return@addSnapshotListener
                 }
                 if (snapshot != null && snapshot.exists()) {
@@ -142,7 +147,10 @@ class FirestoreProfileRepository(
             return@withContext AppResult.Error("Display name must be between 1 and 25 characters")
         }
 
-        try {
+        runFirestoreOperation(
+            errorLogMessage = "Error updating displayName for $uid",
+            defaultErrorMessage = "Failed to update display name"
+        ) {
             usersCollection.document(uid).update(
                 mapOf(
                     "displayName" to trimmed,
@@ -150,14 +158,14 @@ class FirestoreProfileRepository(
                 )
             ).await()
             AppResult.Success(Unit)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error updating displayName for $uid", e)
-            AppResult.Error(e.localizedMessage ?: "Failed to update display name")
         }
     }
 
     override suspend fun updateAvatar(uid: String, avatarId: AvatarId): AppResult<Unit> = withContext(Dispatchers.IO) {
-        try {
+        runFirestoreOperation(
+            errorLogMessage = "Error updating avatar for $uid",
+            defaultErrorMessage = "Failed to update avatar"
+        ) {
             usersCollection.document(uid).update(
                 mapOf(
                     "avatarId" to avatarId.id,
@@ -165,9 +173,6 @@ class FirestoreProfileRepository(
                 )
             ).await()
             AppResult.Success(Unit)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error updating avatar for $uid", e)
-            AppResult.Error(e.localizedMessage ?: "Failed to update avatar")
         }
     }
 
@@ -181,7 +186,10 @@ class FirestoreProfileRepository(
             return@withContext AppResult.Error("Display name must be between 1 and 25 characters")
         }
 
-        try {
+        runFirestoreOperation(
+            errorLogMessage = "Error updating profile for $uid",
+            defaultErrorMessage = "Failed to update profile"
+        ) {
             usersCollection.document(uid).update(
                 mapOf(
                     "displayName" to trimmed,
@@ -190,27 +198,27 @@ class FirestoreProfileRepository(
                 )
             ).await()
             AppResult.Success(Unit)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error updating profile for $uid", e)
-            AppResult.Error(e.localizedMessage ?: "Failed to update profile")
         }
     }
 
     override suspend fun updateLastSeen(uid: String): AppResult<Unit> = withContext(Dispatchers.IO) {
-        try {
+        runFirestoreOperation(
+            errorLogMessage = "Error updating lastSeenAt for $uid",
+            defaultErrorMessage = "Failed to update last seen"
+        ) {
             usersCollection.document(uid).update(
                 "lastSeenAt", System.currentTimeMillis()
             ).await()
             AppResult.Success(Unit)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error updating lastSeenAt for $uid", e)
-            AppResult.Error(e.localizedMessage ?: "Failed to update last seen")
         }
     }
 
     override suspend fun getMatchHistory(uid: String): AppResult<List<MatchRecord>> = withContext(Dispatchers.IO) {
         if (uid.isBlank()) return@withContext AppResult.Success(emptyList())
-        try {
+        runFirestoreOperation(
+            errorLogMessage = "Error getting match history for $uid",
+            defaultErrorMessage = "Failed to load match history"
+        ) {
             val querySnapshot = matchesCollection
                 .whereArrayContains("playerUids", uid)
                 .orderBy("completedAt", Query.Direction.DESCENDING)
@@ -222,15 +230,15 @@ class FirestoreProfileRepository(
                 doc.toMatchRecord()
             }
             AppResult.Success(records)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting match history for $uid", e)
-            AppResult.Error(e.localizedMessage ?: "Failed to load match history")
         }
     }
 
     override suspend fun upgradeGuestToPermanent(uid: String, email: String?): AppResult<Unit> = withContext(Dispatchers.IO) {
         if (uid.isBlank()) return@withContext AppResult.Error("User ID cannot be blank")
-        try {
+        runFirestoreOperation(
+            errorLogMessage = "Error upgrading guest to permanent for $uid",
+            defaultErrorMessage = "Failed to upgrade guest account"
+        ) {
             val now = System.currentTimeMillis()
             val updates = mutableMapOf<String, Any?>(
                 "accountType" to AccountType.PERMANENT.name,
@@ -243,31 +251,28 @@ class FirestoreProfileRepository(
             }
             usersCollection.document(uid).update(updates).await()
             AppResult.Success(Unit)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error upgrading guest to permanent for $uid", e)
-            AppResult.Error(e.localizedMessage ?: "Failed to upgrade guest account")
         }
     }
 
     override suspend fun checkGuestMatchEligibility(uid: String): AppResult<Boolean> = withContext(Dispatchers.IO) {
         if (uid.isBlank()) return@withContext AppResult.Error("User ID cannot be blank")
-        try {
+        runFirestoreOperation(
+            errorLogMessage = "Error checking guest eligibility for $uid",
+            defaultErrorMessage = "Failed to verify guest eligibility"
+        ) {
             val snapshot = usersCollection.document(uid).get().await()
             if (!snapshot.exists()) {
                 // New user: eligible
-                return@withContext AppResult.Success(true)
+                return@runFirestoreOperation AppResult.Success(true)
             }
             val profile = snapshot.toUserProfile()
             if (profile == null) {
-                return@withContext AppResult.Success(true)
+                return@runFirestoreOperation AppResult.Success(true)
             }
             if (profile.isGuest && profile.isGuestLimitReached) {
-                return@withContext AppResult.Success(false)
+                return@runFirestoreOperation AppResult.Success(false)
             }
             AppResult.Success(true)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error checking guest eligibility for $uid", e)
-            AppResult.Error(e.localizedMessage ?: "Failed to verify guest eligibility")
         }
     }
 
@@ -353,5 +358,29 @@ class FirestoreProfileRepository(
         private const val TAG = "FirestoreProfileRepo"
         const val USERS_COLLECTION = "users"
         const val MATCHES_COLLECTION = "matches"
+
+        internal inline fun <T> runFirestoreOperation(
+            errorLogMessage: String,
+            defaultErrorMessage: String,
+            onErrorLog: (String, Exception) -> Unit = ::logE,
+            block: () -> AppResult<T>
+        ): AppResult<T> {
+            return try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onErrorLog(errorLogMessage, e)
+                AppResult.Error(e.localizedMessage ?: defaultErrorMessage, e)
+            }
+        }
+
+        private fun logW(message: String, throwable: Throwable? = null) {
+            runCatching { Log.w(TAG, message, throwable) }
+        }
+
+        private fun logE(message: String, throwable: Throwable? = null) {
+            runCatching { Log.e(TAG, message, throwable) }
+        }
     }
 }

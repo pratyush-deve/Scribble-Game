@@ -19,27 +19,58 @@ object AuthModule {
     @Volatile
     private var instance: AuthRepository? = null
 
+    @Volatile
+    private var resolvedClientId: String = ""
+
     fun provideAuthRepository(
         context: Context,
-        profileRepository: ProfileRepository? = null
+        profileRepository: ProfileRepository? = null,
+        webClientId: String? = null
     ): AuthRepository {
-        return instance ?: synchronized(this) {
-            instance ?: createAuthRepository(context.applicationContext, profileRepository).also {
-                instance = it
+        val candidateClientId = webClientId?.trim().orEmpty()
+        val existing = instance
+        if (existing != null && (resolvedClientId.isNotEmpty() || candidateClientId.isEmpty())) {
+            return existing
+        }
+        return synchronized(this) {
+            val current = instance
+            if (current != null && (resolvedClientId.isNotEmpty() || candidateClientId.isEmpty())) {
+                current
+            } else {
+                val appContext = context.applicationContext ?: context
+                val finalWebClientId = resolveWebClientId(
+                    explicitWebClientId = candidateClientId,
+                    resourceLookup = { lookupWebClientIdFromResources(appContext) }
+                )
+                createAuthRepository(
+                    profileRepository = profileRepository,
+                    webClientId = finalWebClientId
+                ).also {
+                    resolvedClientId = finalWebClientId
+                    instance = it
+                }
             }
         }
     }
 
-    private fun createAuthRepository(
-        appContext: Context,
-        profileRepository: ProfileRepository?
-    ): AuthRepository {
+    internal fun resolveWebClientId(
+        explicitWebClientId: String?,
+        resourceLookup: () -> String
+    ): String {
+        val trimmedExplicit = explicitWebClientId?.trim().orEmpty()
+        if (trimmedExplicit.isNotEmpty()) {
+            return trimmedExplicit
+        }
+        return resourceLookup().trim()
+    }
+
+    private fun lookupWebClientIdFromResources(appContext: Context): String {
         val resId = appContext.resources.getIdentifier(
             "default_web_client_id",
             "string",
             appContext.packageName
         )
-        val webClientId = if (resId != 0) {
+        return if (resId != 0) {
             appContext.getString(resId).trim()
         } else {
             runCatching {
@@ -47,7 +78,12 @@ object AuthModule {
             }
             ""
         }
+    }
 
+    private fun createAuthRepository(
+        profileRepository: ProfileRepository?,
+        webClientId: String
+    ): AuthRepository {
         val googleIdTokenProvider = CredentialManagerGoogleIdTokenProvider(webClientId)
         return FirebaseAuthRepository(
             firebaseAuth = FirebaseAuth.getInstance(),
@@ -67,6 +103,7 @@ object AuthModule {
 
     fun setAuthRepositoryForTesting(repository: AuthRepository?) {
         instance = repository
+        resolvedClientId = if (repository != null) "test" else ""
     }
 }
 
