@@ -8,6 +8,7 @@ import com.pratyush.scribble.core.designsystem.theme.StrokeBlack
 import com.pratyush.scribble.core.model.AvatarId
 import com.pratyush.scribble.core.model.ChatMessage
 import com.pratyush.scribble.core.model.ChatMessageType
+import com.pratyush.scribble.core.model.DrawingReaction
 import com.pratyush.scribble.core.model.DrawingStroke
 import com.pratyush.scribble.core.model.DrawingTool
 import com.pratyush.scribble.core.model.GamePhase
@@ -71,6 +72,8 @@ class GameViewModel(
 
     private var timerJob: Job? = null
     private var strokesObserveJob: Job? = null
+    private var reactionsObserveJob: Job? = null
+    private var isSubmittingReaction: Boolean = false
 
     init {
         if (gameRepository != null && roomRepository != null) {
@@ -243,6 +246,16 @@ class GameViewModel(
             isAdvancingTurn.set(false)
             // Turn changed -> re-listen to strokes for this turn
             observeStrokesForTurn(roomId, snapshot.turnId, isDrawer)
+            observeReactionsForTurn(roomId, snapshot.turnId)
+            _gameUiState.update {
+                it.copy(
+                    hasVotedThisTurn = false,
+                    selectedReaction = null,
+                    likeCount = 0,
+                    dislikeCount = 0,
+                    reactionErrorMessage = null
+                )
+            }
             _canvasState.update { it.copy(strokes = emptyList(), canUndo = false) }
             undoHistory.clear()
             preEraserGestureSnapshot = null
@@ -345,6 +358,133 @@ class GameViewModel(
                 }
             }
         }
+    }
+
+    private fun observeReactionsForTurn(roomId: String, turnId: String) {
+        val gameRepo = gameRepository ?: return
+        if (turnId.isBlank()) return
+        reactionsObserveJob?.cancel()
+        reactionsObserveJob = viewModelScope.launch {
+            gameRepo.observeReactions(roomId, turnId).collectLatest { reactionsMap ->
+                val myReaction = reactionsMap[localPlayerId]
+                val likes = reactionsMap.values.count { it == DrawingReaction.LIKE }
+                val dislikes = reactionsMap.values.count { it == DrawingReaction.DISLIKE }
+                _gameUiState.update { current ->
+                    current.copy(
+                        selectedReaction = myReaction ?: current.selectedReaction,
+                        hasVotedThisTurn = current.hasVotedThisTurn || (myReaction != null),
+                        likeCount = likes,
+                        dislikeCount = dislikes
+                    )
+                }
+            }
+        }
+    }
+
+    fun submitReaction(reaction: DrawingReaction) {
+        val current = _gameUiState.value
+        if (current.isLocalDrawer) return
+        if (current.phase != GamePhase.DRAWING) return
+        if (current.isRoundEnded || current.remainingTimeSeconds <= 0 || current.isGameFinished || current.isPlayerDeparted) return
+        if (current.hasVotedThisTurn) return
+        if (isSubmittingReaction) return
+
+        val roomId = activeRoomId
+        val targetTurnId = currentTurnId
+        if (targetTurnId.isBlank()) return
+
+        // 1. Immediate synchronous optimistic UI update: buttons disappear immediately
+        isSubmittingReaction = true
+        _gameUiState.update { state ->
+            val likes = if (reaction == DrawingReaction.LIKE) state.likeCount + 1 else state.likeCount
+            val dislikes = if (reaction == DrawingReaction.DISLIKE) state.dislikeCount + 1 else state.dislikeCount
+            state.copy(
+                hasVotedThisTurn = true,
+                selectedReaction = reaction,
+                likeCount = likes,
+                dislikeCount = dislikes,
+                reactionErrorMessage = null
+            )
+        }
+
+        if (roomId == null || gameRepository == null) {
+            isSubmittingReaction = false
+            return
+        }
+
+        // 2. Asynchronous write to Firebase
+        viewModelScope.launch {
+            try {
+                val result = gameRepository.submitReaction(roomId, targetTurnId, localPlayerId, reaction)
+                if (result is AppResult.Error) {
+                    handleVoteFailure(targetTurnId, result.message ?: "Failed to submit reaction")
+                } else if (result is AppResult.Success) {
+                    try {
+                        val localPlayer = _gameUiState.value.players.firstOrNull { it.id == localPlayerId }
+                        val displayName = localPlayer?.name?.trim()?.ifEmpty { null }
+                            ?: authRepository?.currentUser?.value?.displayName?.trim()?.ifEmpty { null }
+                            ?: "Player"
+                        val announcementText = if (reaction == DrawingReaction.LIKE) {
+                            "🔥 $displayName liked the drawing!"
+                        } else {
+                            "👎 $displayName disliked the drawing!"
+                        }
+                        val announcementMsg = ChatMessage(
+                            id = "reaction_${targetTurnId}_${localPlayerId}",
+                            senderId = localPlayerId,
+                            senderName = displayName,
+                            text = announcementText,
+                            timestamp = System.currentTimeMillis(),
+                            type = ChatMessageType.CHAT
+                        )
+                        gameRepository.sendChatMessage(roomId, announcementMsg)
+                    } catch (chatError: Exception) {
+                        android.util.Log.w("GameViewModel", "Failed to send reaction chat announcement", chatError)
+                    }
+                }
+            } catch (e: Exception) {
+                handleVoteFailure(targetTurnId, e.message ?: "Network error submitting reaction")
+            } finally {
+                isSubmittingReaction = false
+            }
+        }
+    }
+
+    private fun handleVoteFailure(targetTurnId: String, errorMsg: String) {
+        val current = _gameUiState.value
+        // Restore buttons only if the player is still eligible and the turn is still active
+        if (currentTurnId == targetTurnId &&
+            current.phase == GamePhase.DRAWING &&
+            !current.isRoundEnded &&
+            current.remainingTimeSeconds > 0 &&
+            !current.isGameFinished &&
+            !current.isPlayerDeparted
+        ) {
+            _gameUiState.update { state ->
+                val prev = state.selectedReaction
+                val likes = if (prev == DrawingReaction.LIKE) max(0, state.likeCount - 1) else state.likeCount
+                val dislikes = if (prev == DrawingReaction.DISLIKE) max(0, state.dislikeCount - 1) else state.dislikeCount
+                state.copy(
+                    hasVotedThisTurn = false,
+                    selectedReaction = null,
+                    likeCount = likes,
+                    dislikeCount = dislikes,
+                    reactionErrorMessage = "Reaction failed to send. Tap to retry."
+                )
+            }
+        } else {
+            // Turn already finished or advanced; avoid restoring buttons
+            _gameUiState.update { state ->
+                state.copy(reactionErrorMessage = null)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        timerJob?.cancel()
+        strokesObserveJob?.cancel()
+        reactionsObserveJob?.cancel()
     }
 
     private fun startDeadlineTimer() {

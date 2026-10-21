@@ -12,5 +12,6 @@ data class RoundState(
     val remainingTimeSeconds: Int = 60,
     val totalTimeSeconds: Int = 60,
     val wordChoices: List<WordChoice> = emptyList(),
-    val phase: GamePhase = GamePhase.WAITING_FOR_PLAYERS
+    val phase: GamePhase = GamePhase.WAITING_FOR_PLAYERS,
+    val reactions: Map<String, DrawingReaction> = emptyMap()
 )

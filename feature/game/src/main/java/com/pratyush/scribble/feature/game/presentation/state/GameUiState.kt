@@ -1,6 +1,7 @@
 package com.pratyush.scribble.feature.game.presentation.state
 
 import com.pratyush.scribble.core.model.ChatMessage
+import com.pratyush.scribble.core.model.DrawingReaction
 import com.pratyush.scribble.core.model.GamePhase
 import com.pratyush.scribble.core.model.MaskedWord
 import com.pratyush.scribble.core.model.Player
@@ -43,5 +44,10 @@ data class GameUiState(
     val isGameFinished: Boolean = false,
     val showLeaveConfirmationDialog: Boolean = false,
     val isPlayerDeparted: Boolean = false,
-    val defaultWinReason: String? = null
+    val defaultWinReason: String? = null,
+    val hasVotedThisTurn: Boolean = false,
+    val selectedReaction: DrawingReaction? = null,
+    val likeCount: Int = 0,
+    val dislikeCount: Int = 0,
+    val reactionErrorMessage: String? = null
 )

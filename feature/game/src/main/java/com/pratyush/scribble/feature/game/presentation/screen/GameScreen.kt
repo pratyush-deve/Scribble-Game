@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,15 +32,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import com.pratyush.scribble.core.designsystem.theme.DarkSurface
 import com.pratyush.scribble.core.designsystem.theme.DarkSurfaceElevated
 import com.pratyush.scribble.core.designsystem.theme.ScribbleTheme
@@ -46,6 +59,7 @@ import com.pratyush.scribble.core.designsystem.theme.TextSecondary
 import com.pratyush.scribble.core.designsystem.theme.VibrantAmber
 import com.pratyush.scribble.core.designsystem.theme.VibrantCyan
 import com.pratyush.scribble.core.designsystem.theme.VibrantViolet
+import com.pratyush.scribble.core.model.DrawingReaction
 import com.pratyush.scribble.core.model.DrawingStroke
 import com.pratyush.scribble.core.model.DrawingTool
 import com.pratyush.scribble.core.model.GamePhase
@@ -83,26 +97,87 @@ fun GameScreen(
     onDismissLeaveConfirmation: () -> Unit,
     onDepartedNavigateHome: () -> Unit,
     onNavigateToResults: (roomCode: String, defaultWinReason: String?) -> Unit,
+    onReactionClicked: (DrawingReaction) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+
+    val chatListState = rememberLazyListState()
+    var previousMessageCount by remember { mutableIntStateOf(0) }
+
+    // Auto-scroll on new messages or initial load
+    LaunchedEffect(uiState.chatMessages.size, uiState.chatMessages.lastOrNull()?.id) {
+        val messageCount = uiState.chatMessages.size
+        if (messageCount > 0) {
+            // Ensure scrolling occurs after the updated message list has been composed
+            snapshotFlow { chatListState.layoutInfo.totalItemsCount }
+                .filter { it >= messageCount }
+                .first()
+
+            val isInitialLoad = previousMessageCount == 0
+            val diff = messageCount - previousMessageCount
+            previousMessageCount = messageCount
+
+            if (isInitialLoad) {
+                chatListState.scrollToItem(0)
+            } else if (diff <= 2 && chatListState.firstVisibleItemIndex <= 3) {
+                chatListState.animateScrollToItem(0)
+            } else {
+                chatListState.scrollToItem(0)
+            }
+        } else {
+            previousMessageCount = 0
+        }
+    }
+
+    // Auto-scroll when keyboard appears, disappears, or available screen height adjusts
+    LaunchedEffect(imeBottom) {
+        if (uiState.chatMessages.isNotEmpty()) {
+            chatListState.scrollToItem(0)
+        }
+    }
+
+    LaunchedEffect(chatListState) {
+        snapshotFlow { chatListState.layoutInfo.viewportSize.height }
+            .distinctUntilChanged()
+            .collect {
+                if (uiState.chatMessages.isNotEmpty() && chatListState.firstVisibleItemIndex <= 1) {
+                    chatListState.scrollToItem(0)
+                }
+            }
+    }
 
     // Intercept hardware/system back button while game is active
+    val showReactions = !uiState.isLocalDrawer &&
+        uiState.phase == GamePhase.DRAWING &&
+        !uiState.isRoundEnded &&
+        uiState.remainingTimeSeconds > 0 &&
+        !uiState.isGameFinished &&
+        !uiState.isPlayerDeparted &&
+        !uiState.hasVotedThisTurn
+
     BackHandler(enabled = !uiState.isGameFinished && !uiState.isPlayerDeparted) {
         onRequestLeaveGame()
     }
 
+    var hasNavigatedToResults by remember { mutableStateOf(false) }
+    var hasNavigatedDeparted by remember { mutableStateOf(false) }
+
     // When the game concludes (normal finish or opponent default win)
     LaunchedEffect(uiState.isGameFinished) {
-        if (uiState.isGameFinished) {
+        if (uiState.isGameFinished && !hasNavigatedToResults) {
+            hasNavigatedToResults = true
             onNavigateToResults(uiState.roomCode, uiState.defaultWinReason)
         }
     }
 
     // When this player confirms departure, navigate back to home screen
     LaunchedEffect(uiState.isPlayerDeparted) {
-        if (uiState.isPlayerDeparted) {
+        if (uiState.isPlayerDeparted && !hasNavigatedDeparted) {
+            hasNavigatedDeparted = true
             onDepartedNavigateHome()
         }
     }
@@ -196,7 +271,13 @@ fun GameScreen(
                                     onEraserGestureCompleted = onEraserGestureCompleted,
                                     currentColor = canvasState.currentColor,
                                     currentStrokeWidth = canvasState.currentStrokeWidth,
-                                    currentTool = canvasState.currentTool
+                                    currentTool = canvasState.currentTool,
+                                    showReactions = showReactions,
+                                    selectedReaction = uiState.selectedReaction,
+                                    likeCount = uiState.likeCount,
+                                    dislikeCount = uiState.dislikeCount,
+                                    reactionErrorMessage = uiState.reactionErrorMessage,
+                                    onReactionClicked = onReactionClicked
                                 )
                             }
                             if (uiState.isLocalDrawer && uiState.phase == GamePhase.DRAWING && !uiState.isGameFinished) {
@@ -231,6 +312,7 @@ fun GameScreen(
                             }
 
                             LazyColumn(
+                                state = chatListState,
                                 modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
@@ -278,7 +360,13 @@ fun GameScreen(
                                 onEraserGestureCompleted = onEraserGestureCompleted,
                                 currentColor = canvasState.currentColor,
                                 currentStrokeWidth = canvasState.currentStrokeWidth,
-                                currentTool = canvasState.currentTool
+                                currentTool = canvasState.currentTool,
+                                showReactions = showReactions,
+                                selectedReaction = uiState.selectedReaction,
+                                likeCount = uiState.likeCount,
+                                dislikeCount = uiState.dislikeCount,
+                                reactionErrorMessage = uiState.reactionErrorMessage,
+                                onReactionClicked = onReactionClicked
                             )
                         }
 
@@ -314,6 +402,7 @@ fun GameScreen(
                             }
 
                             LazyColumn(
+                                state = chatListState,
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxWidth()

@@ -4,6 +4,7 @@ import com.pratyush.scribble.core.common.result.AppResult
 import com.pratyush.scribble.core.model.ChatMessage
 import com.pratyush.scribble.core.model.ChatMessageType
 import com.pratyush.scribble.core.model.DefaultWordBankDataSource
+import com.pratyush.scribble.core.model.DrawingReaction
 import com.pratyush.scribble.core.model.DrawingStroke
 import com.pratyush.scribble.core.model.DrawerSecretState
 import com.pratyush.scribble.core.model.GamePhase
@@ -29,6 +30,7 @@ class FakeGameRepository(
     private val strokeFlows = ConcurrentHashMap<String, MutableStateFlow<List<DrawingStroke>>>()
     private val chatFlows = ConcurrentHashMap<String, MutableStateFlow<List<ChatMessage>>>()
     private val secretFlows = ConcurrentHashMap<String, MutableStateFlow<DrawerSecretState?>>()
+    private val reactionFlows = ConcurrentHashMap<String, MutableStateFlow<Map<String, DrawingReaction>>>()
     private val playerScores = ConcurrentHashMap<String, ConcurrentHashMap<String, Int>>()
 
     fun getPlayerScore(roomId: String, playerId: String): Int {
@@ -51,6 +53,27 @@ class FakeGameRepository(
     override fun observeDrawerSecret(roomId: String, playerId: String): Flow<DrawerSecretState?> {
         val key = "${roomId}_$playerId"
         return secretFlows.getOrPut(key) { MutableStateFlow(null) }.asStateFlow()
+    }
+
+    override fun observeReactions(roomId: String, turnId: String): Flow<Map<String, DrawingReaction>> {
+        val key = "${roomId}_$turnId"
+        return reactionFlows.getOrPut(key) { MutableStateFlow(emptyMap()) }.asStateFlow()
+    }
+
+    override suspend fun submitReaction(
+        roomId: String,
+        turnId: String,
+        playerId: String,
+        reaction: DrawingReaction
+    ): AppResult<Unit> {
+        val key = "${roomId}_$turnId"
+        val flow = reactionFlows.getOrPut(key) { MutableStateFlow(emptyMap()) }
+        val current = flow.value
+        if (current.containsKey(playerId)) {
+            return AppResult.Error("Player has already submitted a reaction for this turn")
+        }
+        flow.value = current + (playerId to reaction)
+        return AppResult.Success(Unit)
     }
 
     override suspend fun sendStroke(
@@ -86,7 +109,9 @@ class FakeGameRepository(
 
     override suspend fun sendChatMessage(roomId: String, message: ChatMessage): AppResult<Unit> {
         val flow = chatFlows.getOrPut(roomId) { MutableStateFlow(emptyList()) }
-        flow.value = flow.value + message
+        if (flow.value.none { it.id == message.id }) {
+            flow.value = flow.value + message
+        }
         return AppResult.Success(Unit)
     }
 
@@ -198,6 +223,7 @@ class FakeGameRepository(
     override suspend fun startWordSelection(roomId: String, drawTimeSeconds: Int): AppResult<Unit> {
         val stateFlow = gameStateFlows[roomId] ?: return AppResult.Error("Game not found")
         val cur = stateFlow.value ?: return AppResult.Error("State not found")
+        if (cur.phase == GamePhase.MATCH_RESULTS) return AppResult.Success(Unit)
         stateFlow.value = cur.copy(
             phase = GamePhase.SELECTING_WORD,
             turnDeadline = System.currentTimeMillis() + (drawTimeSeconds * 1000L)
@@ -225,6 +251,7 @@ class FakeGameRepository(
 
         val stateFlow = gameStateFlows[roomId] ?: return AppResult.Error("Game not found")
         val state = stateFlow.value ?: return AppResult.Error("State not found")
+        if (state.phase == GamePhase.MATCH_RESULTS) return AppResult.Success(Unit)
 
         stateFlow.value = state.copy(
             phase = GamePhase.DRAWING,
@@ -262,6 +289,11 @@ class FakeGameRepository(
     override suspend fun endTurnAndAdvance(roomId: String, reason: String): AppResult<Unit> {
         val stateFlow = gameStateFlows[roomId] ?: return AppResult.Error("Game not found")
         val state = stateFlow.value ?: return AppResult.Error("State not found")
+        if (state.phase == GamePhase.MATCH_RESULTS) return AppResult.Success(Unit)
+        if (reason == "INSUFFICIENT_PLAYERS" || state.turnOrder.size < 2) {
+            stateFlow.value = state.copy(phase = GamePhase.MATCH_RESULTS, revealedWord = "GAME OVER")
+            return AppResult.Success(Unit)
+        }
 
         val currentDrawerId = state.drawerId
         val correctCount = state.correctGuessers.size

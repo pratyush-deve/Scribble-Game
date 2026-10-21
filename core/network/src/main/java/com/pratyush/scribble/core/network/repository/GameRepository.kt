@@ -2,6 +2,7 @@ package com.pratyush.scribble.core.network.repository
 
 import com.pratyush.scribble.core.common.result.AppResult
 import com.pratyush.scribble.core.model.ChatMessage
+import com.pratyush.scribble.core.model.DrawingReaction
 import com.pratyush.scribble.core.model.DrawingStroke
 import com.pratyush.scribble.core.model.DrawerSecretState
 import com.pratyush.scribble.core.model.GameStateSnapshot
@@ -15,6 +16,8 @@ interface GameRepository {
     fun observeDrawingStrokes(roomId: String, turnId: String): Flow<List<DrawingStroke>>
     fun observeChatMessages(roomId: String): Flow<List<ChatMessage>>
     fun observeDrawerSecret(roomId: String, playerId: String): Flow<DrawerSecretState?>
+    fun observeReactions(roomId: String, turnId: String): Flow<Map<String, DrawingReaction>> = kotlinx.coroutines.flow.emptyFlow()
+    suspend fun submitReaction(roomId: String, turnId: String, playerId: String, reaction: DrawingReaction): AppResult<Unit> = AppResult.Success(Unit)
 
     suspend fun sendStroke(roomId: String, turnId: String, stroke: DrawingStroke, seq: Long): AppResult<Unit>
     suspend fun deleteStrokes(roomId: String, turnId: String, strokeIds: List<String>): AppResult<Unit>

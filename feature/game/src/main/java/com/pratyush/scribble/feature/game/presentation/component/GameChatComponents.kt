@@ -32,6 +32,7 @@ import com.pratyush.scribble.core.designsystem.theme.DarkSurface
 import com.pratyush.scribble.core.designsystem.theme.DarkSurfaceVariant
 import com.pratyush.scribble.core.designsystem.theme.TextPrimary
 import com.pratyush.scribble.core.designsystem.theme.TextSecondary
+import com.pratyush.scribble.core.designsystem.theme.VibrantCoral
 import com.pratyush.scribble.core.designsystem.theme.VibrantCyan
 import com.pratyush.scribble.core.designsystem.theme.VibrantMint
 import com.pratyush.scribble.core.designsystem.theme.VibrantViolet
@@ -85,6 +86,27 @@ fun ChatMessageBubble(
                 text = "${message.senderName} $action",
                 style = MaterialTheme.typography.bodySmall,
                 color = VibrantCyan,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    } else if (message.id.startsWith("reaction_") ||
+        (message.text.startsWith("🔥 ") && message.text.endsWith("liked the drawing!")) ||
+        (message.text.startsWith("👎 ") && message.text.endsWith("disliked the drawing!"))
+    ) {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (senderPlayer != null) {
+                AvatarBadge(emoji = senderPlayer.avatarId.emoji, size = 20.dp)
+                Spacer(modifier = Modifier.width(6.dp))
+            }
+            Text(
+                text = message.text,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (message.text.contains("disliked")) VibrantCoral else VibrantMint,
                 fontWeight = FontWeight.SemiBold
             )
         }

@@ -13,6 +13,7 @@ import com.pratyush.scribble.core.common.result.AppResult
 import com.pratyush.scribble.core.model.ChatMessage
 import com.pratyush.scribble.core.model.ChatMessageType
 import com.pratyush.scribble.core.model.DefaultWordBankDataSource
+import com.pratyush.scribble.core.model.DrawingReaction
 import com.pratyush.scribble.core.model.DrawingStroke
 import com.pratyush.scribble.core.model.DrawerSecretState
 import com.pratyush.scribble.core.model.GamePhase
@@ -199,6 +200,55 @@ class FirebaseGameRepository(
         awaitClose { secretRef.removeEventListener(listener) }
     }
 
+    override fun observeReactions(roomId: String, turnId: String): Flow<Map<String, DrawingReaction>> = callbackFlow {
+        if (turnId.isBlank()) {
+            trySend(emptyMap())
+            awaitClose { }
+            return@callbackFlow
+        }
+        val reactionsRef = roomsRef.child(roomId).child("reactions").child(turnId)
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val map = mutableMapOf<String, DrawingReaction>()
+                for (child in snapshot.children) {
+                    val key = child.key ?: continue
+                    val str = child.getValue(String::class.java) ?: continue
+                    val reaction = runCatching { DrawingReaction.valueOf(str) }.getOrNull()
+                    if (reaction != null) {
+                        map[key] = reaction
+                    }
+                }
+                trySend(map)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                close(error.toException())
+            }
+        }
+        reactionsRef.addValueEventListener(listener)
+        awaitClose { reactionsRef.removeEventListener(listener) }
+    }
+
+    override suspend fun submitReaction(
+        roomId: String,
+        turnId: String,
+        playerId: String,
+        reaction: DrawingReaction
+    ): AppResult<Unit> = suspendCancellableCoroutine { cont ->
+        if (turnId.isBlank() || playerId.isBlank()) {
+            cont.resume(AppResult.Error("Invalid turnId or playerId"))
+            return@suspendCancellableCoroutine
+        }
+        val ref = roomsRef.child(roomId).child("reactions").child(turnId).child(playerId)
+        ref.setValue(reaction.name) { error, _ ->
+            if (error != null) {
+                cont.resume(AppResult.Error(error.message))
+            } else {
+                cont.resume(AppResult.Success(Unit))
+            }
+        }
+    }
+
     override suspend fun sendStroke(
         roomId: String,
         turnId: String,
@@ -264,8 +314,12 @@ class FirebaseGameRepository(
     }
 
     override suspend fun sendChatMessage(roomId: String, message: ChatMessage): AppResult<Unit> = suspendCancellableCoroutine { cont ->
-        val msgRef = roomsRef.child(roomId).child("chat").push()
-        val key = msgRef.key ?: message.id
+        val msgRef = if (message.id.isNotBlank()) {
+            roomsRef.child(roomId).child("chat").child(message.id)
+        } else {
+            roomsRef.child(roomId).child("chat").push()
+        }
+        val key = message.id.ifBlank { msgRef.key.orEmpty() }
         val dto = FirebaseChatMessageDto(
             id = key,
             senderId = message.senderId,
@@ -436,13 +490,22 @@ class FirebaseGameRepository(
             "phase" to GamePhase.SELECTING_WORD.name,
             "turnDeadline" to deadline
         )
-        roomsRef.child(roomId).child("gameState").updateChildren(updates) { error, _ ->
-            if (error != null) {
-                cont.resume(AppResult.Error(error.message))
-            } else {
+        val gameStateRef = roomsRef.child(roomId).child("gameState")
+        gameStateRef.runTransaction(object : Transaction.Handler {
+            override fun doTransaction(currentData: MutableData): Transaction.Result {
+                val currentPhase = currentData.child("phase").getValue(String::class.java)
+                if (currentPhase == GamePhase.MATCH_RESULTS.name) {
+                    return Transaction.abort()
+                }
+                currentData.child("phase").value = GamePhase.SELECTING_WORD.name
+                currentData.child("turnDeadline").value = deadline
+                return Transaction.success(currentData)
+            }
+            override fun onComplete(error: DatabaseError?, committed: Boolean, currentData: DataSnapshot?) {
                 cont.resume(AppResult.Success(Unit))
             }
-        }
+        })
+
     }
 
     override suspend fun ensureDrawerSecret(
@@ -513,11 +576,11 @@ class FirebaseGameRepository(
         val wordHash = DefaultWordBankDataSource.hashWord(upperWord)
         val deadline = System.currentTimeMillis() + (drawTimeSeconds * 1000L)
 
-        // 1. Update drawer secret record
+        // 1. Update drawer secret record (private to drawer)
         secretsRef.child(roomId).child(drawerId).child("selectedWord").setValue(upperWord)
 
-        // 2. Update public game state
-        val updates = mapOf(
+        // 2. Update public game state via updateChildren (matches Firebase child security rules for drawer)
+        val updates = mapOf<String, Any?>(
             "phase" to GamePhase.DRAWING.name,
             "maskedWord" to masked.hint,
             "wordLength" to upperWord.length,
@@ -528,11 +591,13 @@ class FirebaseGameRepository(
 
         roomsRef.child(roomId).child("gameState").updateChildren(updates) { error, _ ->
             if (error != null) {
+                Log.e(TAG, "selectWord updateChildren failed: ${error.message}", error.toException())
                 cont.resume(AppResult.Error(error.message))
             } else {
                 cont.resume(AppResult.Success(Unit))
             }
         }
+
     }
 
     override suspend fun endTurnAndAdvance(
@@ -544,6 +609,15 @@ class FirebaseGameRepository(
             override fun doTransaction(currentData: MutableData): Transaction.Result {
                 val gameState = currentData.getValue(FirebaseGameStateDto::class.java)
                     ?: return Transaction.abort()
+
+                if (gameState.phase == GamePhase.MATCH_RESULTS.name) {
+                    return Transaction.abort()
+                }
+
+                if (reason == "INSUFFICIENT_PLAYERS") {
+                    currentData.child("phase").value = GamePhase.MATCH_RESULTS.name
+                    return Transaction.success(currentData)
+                }
 
                 val turnOrder = gameState.turnOrder
                 if (turnOrder.size < 2) {
@@ -628,7 +702,11 @@ class FirebaseGameRepository(
         departingPlayerId: String
     ): AppResult<Unit> = suspendCancellableCoroutine { cont ->
         val playerRef = roomsRef.child(roomId).child("players").child(departingPlayerId)
-        playerRef.removeValue { error, _ ->
+        val updates = mapOf<String, Any>(
+            "isConnected" to false,
+            "isDeparted" to true
+        )
+        playerRef.updateChildren(updates) { error, _ ->
             if (error != null) {
                 cont.resume(AppResult.Error(error.message))
             } else {

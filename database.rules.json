@@ -55,6 +55,14 @@
             }
           }
         },
+        "reactions": {
+          "$turnId": {
+            "$playerId": {
+              ".write": "auth != null && ((!data.exists() && newData.exists() && $playerId === auth.uid && root.child('rooms').child($roomId).child('gameState').child('drawerId').val() !== auth.uid && root.child('rooms').child($roomId).child('gameState').child('phase').val() === 'DRAWING' && root.child('rooms').child($roomId).child('gameState').child('turnId').val() === $turnId && root.child('rooms').child($roomId).child('players').child(auth.uid).exists() && root.child('rooms').child($roomId).child('players').child(auth.uid).child('isConnected').val() === true) || (!newData.exists() && root.child('rooms').child($roomId).child('hostId').val() === auth.uid))",
+              ".validate": "!newData.exists() || (newData.isString() && (newData.val() === 'LIKE' || newData.val() === 'DISLIKE'))"
+            }
+          }
+        },
         "chat": {
           "$messageId": {
             ".write": "auth != null && (!data.exists() || !newData.exists()) && newData.child('senderId').val() === auth.uid",

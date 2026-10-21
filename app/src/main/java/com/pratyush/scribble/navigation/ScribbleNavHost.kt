@@ -223,6 +223,7 @@ fun ScribbleNavHost(
                 onRequestLeaveGame = gameViewModel::onRequestLeaveGame,
                 onConfirmLeaveGame = gameViewModel::onConfirmLeaveGame,
                 onDismissLeaveConfirmation = gameViewModel::onDismissLeaveConfirmation,
+                onReactionClicked = gameViewModel::submitReaction,
                 onDepartedNavigateHome = {
                     navController.navigate(ScreenDestination.Home) {
                         popUpTo(ScreenDestination.Home) { inclusive = true }

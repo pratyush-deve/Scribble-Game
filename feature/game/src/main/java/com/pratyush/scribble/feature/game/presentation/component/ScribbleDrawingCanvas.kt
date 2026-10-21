@@ -5,12 +5,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -26,6 +28,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.pratyush.scribble.core.designsystem.theme.CanvasWhite
 import com.pratyush.scribble.core.model.DrawingPoint
+import com.pratyush.scribble.core.model.DrawingReaction
 import com.pratyush.scribble.core.model.DrawingStroke
 import com.pratyush.scribble.core.model.DrawingTool
 
@@ -39,7 +42,13 @@ fun ScribbleDrawingCanvas(
     currentColor: Color,
     currentStrokeWidth: Float,
     currentTool: DrawingTool,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showReactions: Boolean = false,
+    selectedReaction: DrawingReaction? = null,
+    likeCount: Int = 0,
+    dislikeCount: Int = 0,
+    reactionErrorMessage: String? = null,
+    onReactionClicked: (DrawingReaction) -> Unit = {}
 ) {
     var canvasSize by remember { mutableStateOf(IntSize(1, 1)) }
     var activePoints by remember { mutableStateOf<List<DrawingPoint>>(emptyList()) }
@@ -181,6 +190,19 @@ fun ScribbleDrawingCanvas(
                     )
                 }
             }
+        }
+
+        if (showReactions) {
+            CanvasReactionButtons(
+                selectedReaction = selectedReaction,
+                likeCount = likeCount,
+                dislikeCount = dislikeCount,
+                onReactionClicked = onReactionClicked,
+                errorMessage = reactionErrorMessage,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+            )
         }
     }
 }
