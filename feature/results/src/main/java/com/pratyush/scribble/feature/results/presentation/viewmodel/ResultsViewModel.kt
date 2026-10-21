@@ -2,6 +2,7 @@ package com.pratyush.scribble.feature.results.presentation.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pratyush.scribble.core.model.AvatarId
 import com.pratyush.scribble.core.model.GamePhase
 import com.pratyush.scribble.core.model.GameStateSnapshot
 import com.pratyush.scribble.core.model.Player
@@ -49,7 +50,9 @@ class ResultsViewModel(
 
     init {
         loadResults()
-        startVotingTimer(15)
+        if (winReason == null) {
+            startVotingTimer(15)
+        }
     }
 
     private fun startVotingTimer(initialSeconds: Int) {
@@ -69,7 +72,7 @@ class ResultsViewModel(
     private var exitJob: Job? = null
 
     private fun triggerFailedVoteExit() {
-        if (_uiState.value.isVoteFailed || _uiState.value.shouldNavigateHome) return
+        if (_uiState.value.isVoteFailed || _uiState.value.shouldNavigateHome || winReason != null) return
         countdownJob?.cancel()
         _uiState.update { it.copy(isVoteFailed = true, isSessionClosed = true) }
         exitJob?.cancel()
@@ -118,60 +121,107 @@ class ResultsViewModel(
                 Triple(room, gameState, replayVoting)
             }.collectLatest { (room, gameState, replayVoting) ->
                 // Check if room or session was closed/deleted
-                if (room == null || replayVoting?.status == "CLOSED") {
-                    if (!_uiState.value.isGameRestarted) {
+                val effectiveRoom = room ?: cachedRoom
+                if (effectiveRoom == null) {
+                    if (winReason == null && !_uiState.value.isGameRestarted) {
                         triggerFailedVoteExit()
                     }
                     return@collectLatest
                 }
-                cachedRoom = room
+                cachedRoom = effectiveRoom
 
-                // Check if match was restarted
-                if (replayVoting?.status == "RESTARTED" ||
-                    (gameState != null && (gameState.phase == GamePhase.COUNTDOWN || gameState.phase == GamePhase.DRAWING || gameState.phase == GamePhase.SELECTING_WORD))
-                ) {
+                // Check if match was authoritatively restarted via replay voting
+                if (replayVoting?.status == "RESTARTED") {
                     countdownJob?.cancel()
                     _uiState.update { it.copy(isGameRestarted = true) }
                     return@collectLatest
                 }
 
-                val scoresMap = gameState?.scores ?: emptyMap()
-                val totalRounds = gameState?.totalRounds ?: room.settings.rounds
-
-                // Match all participants with their actual scores
-                val playersWithScores = room.players.map { player ->
-                    val finalScore = scoresMap[player.id] ?: player.score
-                    Pair(player, finalScore)
+                if (replayVoting?.status == "CLOSED") {
+                    if (winReason == null && !_uiState.value.isGameRestarted) {
+                        triggerFailedVoteExit()
+                    }
+                    return@collectLatest
                 }
 
-                // Sort descending by score
-                val sorted = playersWithScores.sortedWith(
+                val scoresMap = gameState?.scores ?: emptyMap()
+                val totalRounds = gameState?.totalRounds ?: effectiveRoom.settings.rounds
+
+                // Match all participants with their actual scores
+                val roomPlayerMap = effectiveRoom.players.associateBy { it.id }
+                val allParticipantIds = (effectiveRoom.players.map { it.id } + (gameState?.turnOrder ?: emptyList()) + scoresMap.keys).distinct()
+                val allParticipants = allParticipantIds.map { playerId ->
+                    val existing = roomPlayerMap[playerId]
+                    val player = existing ?: Player(
+                        id = playerId,
+                        name = "Player",
+                        avatarId = AvatarId.CAT,
+                        score = scoresMap[playerId] ?: 0,
+                        isConnected = false,
+                        isDeparted = true
+                    )
+                    val score = scoresMap[playerId] ?: player.score
+                    Pair(player, score)
+                }
+
+                val activePlayers = allParticipants.filter { !it.first.isDeparted && it.first.isConnected }
+                val departedPlayers = allParticipants.filter { it.first.isDeparted || !it.first.isConnected }
+
+                if (winReason != null || activePlayers.size < 2) {
+                    countdownJob?.cancel()
+                }
+
+                val sortedActive = activePlayers.sortedWith(
+                    compareByDescending<Pair<Player, Int>> { it.second }
+                        .thenBy { it.first.name }
+                )
+                val sortedDeparted = departedPlayers.sortedWith(
                     compareByDescending<Pair<Player, Int>> { it.second }
                         .thenBy { it.first.name }
                 )
 
-                // Compute ranks with standard tie handling
+                // Compute ranks with standard tie handling, keeping departed players ranked below active
                 var currentRank = 1
                 var prevScore: Int? = null
-                val rankings = sorted.mapIndexed { index, (player, score) ->
+                val activeRankings = sortedActive.mapIndexed { index, (player, score) ->
                     if (prevScore != null && score < prevScore!!) {
                         currentRank = index + 1
                     }
                     prevScore = score
                     PlayerScore(
-                        player = player.copy(score = score),
+                        player = player.copy(score = score, isDeparted = false),
                         rank = currentRank,
                         score = score,
-                        roundScore = 0
+                        roundScore = 0,
+                        isDeparted = false
                     )
                 }
 
-                val totalParticipants = room.players.size
+                val departedRankOffset = activeRankings.size
+                var departedRank = departedRankOffset + 1
+                prevScore = null
+                val departedRankings = sortedDeparted.mapIndexed { index, (player, score) ->
+                    if (prevScore != null && score < prevScore!!) {
+                        departedRank = departedRankOffset + index + 1
+                    }
+                    prevScore = score
+                    PlayerScore(
+                        player = player.copy(score = score, isDeparted = true),
+                        rank = departedRank,
+                        score = score,
+                        roundScore = 0,
+                        isDeparted = true
+                    )
+                }
+
+                val rankings = activeRankings + departedRankings
+
+                val totalParticipants = effectiveRoom.players.size
                 val defaultMajority = if (totalParticipants > 0) (totalParticipants / 2) + 1 else 1
 
                 val votesMap = replayVoting?.votes ?: emptyMap()
-                val activeParticipantIds = room.players.map { it.id }.toSet()
-                val votedPlayers = room.players.filter { votesMap[it.id] == true && it.id in activeParticipantIds }
+                val activeParticipantIds = effectiveRoom.players.map { it.id }.toSet()
+                val votedPlayers = effectiveRoom.players.filter { votesMap[it.id] == true && it.id in activeParticipantIds }
                 val playAgainVotes = replayVoting?.voteCount ?: votedPlayers.size
                 val requiredMajority = if (replayVoting != null && replayVoting.requiredMajority > 0) {
                     replayVoting.requiredMajority
@@ -179,7 +229,7 @@ class ResultsViewModel(
                     defaultMajority
                 }
 
-                val isHost = (room.hostId == localUid)
+                val isHost = (effectiveRoom.hostId == localUid)
                 val hasVoted = votesMap[localUid] == true
 
                 _uiState.update { current ->

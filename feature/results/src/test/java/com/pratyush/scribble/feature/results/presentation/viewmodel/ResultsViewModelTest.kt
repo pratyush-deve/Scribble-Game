@@ -151,6 +151,74 @@ class ResultsViewModelTest {
         assertTrue(viewModel.uiState.value.shouldNavigateHome)
     }
 
+    @Test
+    fun `departed player is marked with isDeparted and ranked below active players even with higher score`() = runTest {
+        val activePlayer = Player("user_1", "Player1", AvatarId.FOX, score = 50, isDeparted = false, isConnected = true)
+        val departedPlayer = Player("user_2", "Player2", AvatarId.CAT, score = 200, isDeparted = true, isConnected = false)
+        val room = Room(
+            id = "room_1",
+            code = RoomCode("ROOM1"),
+            hostId = "user_1",
+            players = listOf(activePlayer, departedPlayer)
+        )
+        fakeRoomRepo.roomFlow.value = room
+
+        val viewModel = ResultsViewModel(
+            roomCode = "ROOM1",
+            winReason = "Player1 wins by default!",
+            roomRepository = fakeRoomRepo,
+            gameRepository = fakeGameRepo,
+            authRepository = fakeAuthRepo
+        )
+        advanceTimeBy(1000L)
+
+        val rankings = viewModel.uiState.value.rankings
+        assertEquals(2, rankings.size)
+
+        // Active player must be rank 1 (Winner)
+        val rank1 = rankings[0]
+        assertEquals("user_1", rank1.player.id)
+        assertEquals(1, rank1.rank)
+        assertEquals(50, rank1.score)
+        assertFalse(rank1.isDeparted)
+
+        // Departed player must NOT be winner; ranked below active player
+        val rank2 = rankings[1]
+        assertEquals("user_2", rank2.player.id)
+        assertEquals(2, rank2.rank)
+        assertEquals(200, rank2.score) // Score preserved
+        assertTrue(rank2.isDeparted)
+        assertTrue(rank2.player.isDeparted)
+    }
+
+    @Test
+    fun `normal completed match does not mark players as departed`() = runTest {
+        val p1 = Player("user_1", "Player1", AvatarId.FOX, score = 100, isDeparted = false, isConnected = true)
+        val p2 = Player("user_2", "Player2", AvatarId.CAT, score = 80, isDeparted = false, isConnected = true)
+        val room = Room(
+            id = "room_1",
+            code = RoomCode("ROOM1"),
+            hostId = "user_1",
+            players = listOf(p1, p2)
+        )
+        fakeRoomRepo.roomFlow.value = room
+
+        val viewModel = ResultsViewModel(
+            roomCode = "ROOM1",
+            roomRepository = fakeRoomRepo,
+            gameRepository = fakeGameRepo,
+            authRepository = fakeAuthRepo
+        )
+        advanceTimeBy(1000L)
+
+        val rankings = viewModel.uiState.value.rankings
+        assertEquals(2, rankings.size)
+        assertFalse(rankings[0].isDeparted)
+        assertFalse(rankings[1].isDeparted)
+        assertEquals(1, rankings[0].rank)
+        assertEquals("user_1", rankings[0].player.id)
+    }
+
     private class FakeResultsAuthRepository : AuthRepository {
         private val _currentUser = MutableStateFlow<UserProfile?>(null)
         override val currentUser: StateFlow<UserProfile?> = _currentUser.asStateFlow()

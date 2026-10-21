@@ -1,5 +1,6 @@
 package com.pratyush.scribble.feature.results.presentation.screen
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -16,8 +17,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -26,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -37,6 +43,7 @@ import com.pratyush.scribble.core.designsystem.theme.DarkSurfaceVariant
 import com.pratyush.scribble.core.designsystem.theme.ScribbleTheme
 import com.pratyush.scribble.core.designsystem.theme.TextPrimary
 import com.pratyush.scribble.core.designsystem.theme.TextSecondary
+import com.pratyush.scribble.core.designsystem.theme.VibrantCoral
 import com.pratyush.scribble.core.designsystem.theme.VibrantCyan
 import com.pratyush.scribble.core.designsystem.theme.VibrantMint
 import com.pratyush.scribble.core.designsystem.theme.VibrantViolet
@@ -121,6 +128,7 @@ fun ResultsScreen(
                 ) {
                     items(uiState.rankings, key = { it.player.id }) { score ->
                         val isLocal = score.player.id == uiState.localPlayerId
+                        val isPlayerDeparted = score.isDeparted || score.player.isDeparted
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -149,19 +157,53 @@ fun ResultsScreen(
 
                                 Spacer(modifier = Modifier.size(12.dp))
 
-                                Text(
-                                    text = if (isLocal) "${score.player.name} (You)" else score.player.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = if (isLocal) FontWeight.Bold else FontWeight.Medium,
-                                    color = TextPrimary,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (isLocal) "${score.player.name} (You)" else score.player.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = if (isLocal) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isPlayerDeparted) TextSecondary else TextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+
+                                    if (isPlayerDeparted) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            color = com.pratyush.scribble.core.designsystem.theme.ErrorRed.copy(alpha = 0.15f),
+                                            shape = RoundedCornerShape(4.dp),
+                                            border = BorderStroke(1.dp, com.pratyush.scribble.core.designsystem.theme.ErrorRed.copy(alpha = 0.6f))
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.ExitToApp,
+                                                    contentDescription = "Left game",
+                                                    tint = com.pratyush.scribble.core.designsystem.theme.ErrorRed,
+                                                    modifier = Modifier.size(12.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(3.dp))
+                                                Text(
+                                                    text = "LEFT",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Black,
+                                                    color = com.pratyush.scribble.core.designsystem.theme.ErrorRed
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
 
                                 Text(
                                     text = "${score.score} pts",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = VibrantMint
+                                    color = if (isPlayerDeparted) TextSecondary else VibrantMint
                                 )
                             }
                         }
@@ -170,77 +212,88 @@ fun ResultsScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Voting Status & Countdown
-                if (uiState.votingTimeRemainingSeconds > 0) {
-                    Text(
-                        text = "Voting ends in ${uiState.votingTimeRemainingSeconds}s",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = VibrantCyan,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                } else {
-                    Text(
-                        text = "Voting closed",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
-                    )
-                }
-
-                // Voted Players Avatars & Names
-                if (uiState.votedPlayers.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                // Voting Status & Countdown (Only shown for normal completed matches where replay voting is active)
+                if (!uiState.isInsufficientPlayersDeparture) {
+                    if (uiState.votingTimeRemainingSeconds > 0) {
                         Text(
-                            text = "Voted: ",
+                            text = "Voting ends in ${uiState.votingTimeRemainingSeconds}s",
                             style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                            fontWeight = FontWeight.Medium
+                            color = VibrantCyan,
+                            fontWeight = FontWeight.SemiBold
                         )
-                        uiState.votedPlayers.forEach { player ->
-                            Spacer(modifier = Modifier.width(4.dp))
-                            AvatarBadge(emoji = player.avatarId.emoji, size = 20.dp)
-                            Spacer(modifier = Modifier.width(4.dp))
+                    } else {
+                        Text(
+                            text = "Voting closed",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary
+                        )
+                    }
+
+                    // Voted Players Avatars & Names
+                    if (uiState.votedPlayers.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = if (player.id == uiState.localPlayerId) "You" else player.name,
+                                text = "Voted: ",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = VibrantMint,
-                                fontWeight = FontWeight.Bold
+                                color = TextSecondary,
+                                fontWeight = FontWeight.Medium
                             )
+                            uiState.votedPlayers.forEach { player ->
+                                Spacer(modifier = Modifier.width(4.dp))
+                                AvatarBadge(emoji = player.avatarId.emoji, size = 20.dp)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (player.id == uiState.localPlayerId) "You" else player.name,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = VibrantMint,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
 
                 // Action Buttons
-                val voteText = if (uiState.requiredMajority > 1) {
-                    "Play Again (${uiState.playAgainVotes}/${uiState.requiredMajority})"
+                if (uiState.isInsufficientPlayersDeparture) {
+                    // Departure / Insufficient players: Only Back to Home is available
+                    ScribblePrimaryButton(
+                        text = "Back to Home",
+                        onClick = onReturnToHome,
+                        containerColor = VibrantViolet
+                    )
                 } else {
-                    "Play Again"
+                    val voteText = if (uiState.requiredMajority > 1) {
+                        "Play Again (${uiState.playAgainVotes}/${uiState.requiredMajority})"
+                    } else {
+                        "Play Again"
+                    }
+
+                    ScribblePrimaryButton(
+                        text = voteText,
+                        onClick = onPlayAgain,
+                        containerColor = if (uiState.hasVotedPlayAgain) VibrantMint else VibrantViolet
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    ScribbleSecondaryButton(
+                        text = "Back to Home",
+                        onClick = onReturnToHome
+                    )
                 }
-
-                ScribblePrimaryButton(
-                    text = voteText,
-                    onClick = onPlayAgain,
-                    containerColor = if (uiState.hasVotedPlayAgain) VibrantMint else VibrantViolet
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                ScribbleSecondaryButton(
-                    text = "Back to Home",
-                    onClick = onReturnToHome
-                )
 
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Failure transition overlay
-            if (uiState.isVoteFailed) {
+            // Failure transition overlay (Suppressed for active match departure)
+            if (uiState.isVoteFailed && !uiState.isInsufficientPlayersDeparture) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()

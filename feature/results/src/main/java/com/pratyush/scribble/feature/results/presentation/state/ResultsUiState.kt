@@ -21,4 +21,7 @@ data class ResultsUiState(
     val failureSupportingText: String = "The session has ended. Taking you back home...",
     val shouldNavigateHome: Boolean = false,
     val isGameRestarted: Boolean = false
-)
+) {
+    val isInsufficientPlayersDeparture: Boolean
+        get() = winReason != null || (rankings.isNotEmpty() && rankings.count { !it.isDeparted && !it.player.isDeparted } < 2 && rankings.any { it.isDeparted || it.player.isDeparted })
+}

@@ -10,5 +10,6 @@ data class Player(
     val isHost: Boolean = false,
     val score: Int = 0,
     val hasGuessedWord: Boolean = false,
-    val isConnected: Boolean = true
+    val isConnected: Boolean = true,
+    val isDeparted: Boolean = false
 )

@@ -277,6 +277,23 @@ class FirebaseRoomRepository(
                 }
                 val hostId = snapshot.child("hostId").getValue(String::class.java)
                 val code = snapshot.child("code").getValue(String::class.java)
+                val status = snapshot.child("status").getValue(String::class.java) ?: "WAITING"
+
+                if (status == "IN_PROGRESS" || status == "FINISHED") {
+                    // Match is active or finished: preserve room and player data for results
+                    val updates = mapOf<String, Any>(
+                        "isConnected" to false,
+                        "isDeparted" to true
+                    )
+                    roomRef.child("players").child(playerId).updateChildren(updates) { error, _ ->
+                        if (error != null) {
+                            cont.resume(AppResult.Error(error.message))
+                        } else {
+                            cont.resume(AppResult.Success(Unit))
+                        }
+                    }
+                    return
+                }
 
                 if (hostId == playerId) {
                     // Host leaves: close room and remove room code
@@ -471,6 +488,7 @@ class FirebaseRoomRepository(
             val isHost = child.child("isHost").getValue(Boolean::class.java) ?: (playerId == hostId)
             val score = child.child("score").getValue(Int::class.java) ?: 0
             val isConnected = child.child("isConnected").getValue(Boolean::class.java) ?: true
+            val isDeparted = child.child("isDeparted").getValue(Boolean::class.java) ?: false
 
             players.add(
                 Player(
@@ -479,7 +497,8 @@ class FirebaseRoomRepository(
                     avatarId = avatarId,
                     isHost = isHost,
                     score = score,
-                    isConnected = isConnected
+                    isConnected = isConnected,
+                    isDeparted = isDeparted
                 )
             )
         }
@@ -492,7 +511,8 @@ class FirebaseRoomRepository(
                     avatarId = runCatching { AvatarId.valueOf(additionalPlayer.avatarId) }.getOrDefault(AvatarId.CAT),
                     isHost = additionalPlayer.isHost,
                     score = additionalPlayer.score,
-                    isConnected = additionalPlayer.isConnected
+                    isConnected = additionalPlayer.isConnected,
+                    isDeparted = additionalPlayer.isDeparted
                 )
             )
         }
@@ -529,7 +549,8 @@ class FirebaseRoomRepository(
                 avatarId = runCatching { AvatarId.valueOf(p.avatarId) }.getOrDefault(AvatarId.CAT),
                 isHost = p.isHost,
                 score = p.score,
-                isConnected = p.isConnected
+                isConnected = p.isConnected,
+                isDeparted = p.isDeparted
             )
         }.sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.name })
 

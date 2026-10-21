@@ -11,7 +11,8 @@ data class FirebasePlayerDto(
     @get:PropertyName("isHost") @set:PropertyName("isHost") var isHost: Boolean = false,
     @get:PropertyName("score") @set:PropertyName("score") var score: Int = 0,
     @get:PropertyName("joinedAt") @set:PropertyName("joinedAt") var joinedAt: Long = 0L,
-    @get:PropertyName("isConnected") @set:PropertyName("isConnected") var isConnected: Boolean = true
+    @get:PropertyName("isConnected") @set:PropertyName("isConnected") var isConnected: Boolean = true,
+    @get:PropertyName("isDeparted") @set:PropertyName("isDeparted") var isDeparted: Boolean = false
 )
 
 @IgnoreExtraProperties

@@ -7,6 +7,7 @@ import com.pratyush.scribble.feature.game.presentation.viewmodel.GameViewModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -198,5 +199,73 @@ class GameDepartureHandlingTest {
         // Still true and no crash or state corruption
         assertTrue(viewModel.gameUiState.value.isPlayerDeparted)
         assertFalse(viewModel.gameUiState.value.showLeaveConfirmationDialog)
+    }
+
+    @Test
+    fun `three players start - two leave sequentially - remaining player wins by default`() {
+        val p1 = Player("p1", "Player1", AvatarId.FOX, score = 100)
+        val p2 = Player("p2", "Player2", AvatarId.CAT, score = 80)
+        val p3 = Player("p3", "Player3", AvatarId.PANDA, score = 60)
+        val viewModel = GameViewModel(roomCode = "ROOM1", initialPlayers = listOf(p1, p2, p3))
+
+        assertEquals(3, viewModel.gameUiState.value.players.size)
+
+        // First departure: p3 leaves
+        viewModel.handlePlayerDeparture(departingPlayerId = "p3")
+        assertFalse("Game continues with 2 players", viewModel.gameUiState.value.isGameFinished)
+        assertEquals(2, viewModel.gameUiState.value.players.size)
+
+        // Second departure: p2 leaves
+        viewModel.handlePlayerDeparture(departingPlayerId = "p2")
+        val state = viewModel.gameUiState.value
+        assertTrue("Game immediately finishes when 1 player remains", state.isGameFinished)
+        assertEquals(1, state.players.size)
+        assertEquals("p1", state.players.first().id)
+        assertEquals(100, state.players.first().score)
+        assertEquals("Your opponent left the game. You win by default!", state.defaultWinReason)
+    }
+
+    @Test
+    fun `all players leave - ends match without declaring a winner`() {
+        val p1 = Player("p1", "Player1", AvatarId.FOX, score = 100)
+        val viewModel = GameViewModel(roomCode = "ROOM1", initialPlayers = listOf(p1))
+
+        viewModel.handlePlayerDeparture(departingPlayerId = "p1")
+        val state = viewModel.gameUiState.value
+
+        assertTrue("Game finishes when no players remain", state.isGameFinished)
+        assertTrue("Players list is empty", state.players.isEmpty())
+        assertNull("No winner should be declared when 0 players remain", state.defaultWinReason)
+    }
+
+    @Test
+    fun `repeated departure calls for the same player are idempotent and do not create duplicate messages`() {
+        val p1 = Player("p1", "Player1", AvatarId.FOX, score = 100)
+        val p2 = Player("p2", "Player2", AvatarId.CAT, score = 80)
+        val p3 = Player("p3", "Player3", AvatarId.PANDA, score = 60)
+        val viewModel = GameViewModel(roomCode = "ROOM1", initialPlayers = listOf(p1, p2, p3))
+
+        viewModel.handlePlayerDeparture(departingPlayerId = "p3")
+        val countAfterFirst = viewModel.gameUiState.value.chatMessages.count { it.text.contains("Player3") }
+        assertEquals(1, countAfterFirst)
+
+        // Call again for p3
+        viewModel.handlePlayerDeparture(departingPlayerId = "p3")
+        val countAfterSecond = viewModel.gameUiState.value.chatMessages.count { it.text.contains("Player3") }
+        assertEquals(1, countAfterSecond)
+    }
+
+    @Test
+    fun `contextual messaging displays winner name when local player is not the winner`() {
+        val p2 = Player("p2", "WinnerPlayer", AvatarId.CAT, score = 80)
+        val p3 = Player("p3", "DepartedPlayer", AvatarId.PANDA, score = 60)
+        // localPlayerId is "p1" by default, which is neither p2 nor p3
+        val viewModel = GameViewModel(roomCode = "ROOM1", initialPlayers = listOf(p2, p3))
+
+        viewModel.handlePlayerDeparture(departingPlayerId = "p3")
+        val state = viewModel.gameUiState.value
+
+        assertTrue(state.isGameFinished)
+        assertEquals("WinnerPlayer wins! DepartedPlayer left the game.", state.defaultWinReason)
     }
 }

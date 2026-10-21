@@ -37,9 +37,10 @@ fun WinnerPodium(
     rankings: List<PlayerScore>,
     modifier: Modifier = Modifier
 ) {
-    val first = rankings.firstOrNull()
-    val second = rankings.getOrNull(1)
-    val third = rankings.getOrNull(2)
+    val eligibleRankings = rankings.filter { !it.isDeparted && !it.player.isDeparted }
+    val first = eligibleRankings.firstOrNull()
+    val second = eligibleRankings.getOrNull(1)
+    val third = eligibleRankings.getOrNull(2)
 
     Row(
         modifier = modifier
