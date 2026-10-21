@@ -69,6 +69,7 @@ functions/node_modules/
 functions/lib/
 
 # Profiling, logs & temporary files
+Animation/
 *.log
 *.hprof
 *.trace

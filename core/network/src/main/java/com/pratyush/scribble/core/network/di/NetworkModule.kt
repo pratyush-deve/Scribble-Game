@@ -18,6 +18,9 @@ object NetworkModule {
     @Volatile
     private var profileRepositoryInstance: ProfileRepository? = null
 
+    @Volatile
+    private var avatarAnimationRepositoryInstance: com.pratyush.scribble.core.network.repository.AvatarAnimationRepository? = null
+
     private const val RTDB_URL = "https://scribble-9bba6-default-rtdb.firebaseio.com"
 
     fun provideProfileRepository(): ProfileRepository {
@@ -63,6 +66,25 @@ object NetworkModule {
                 created
             }
         }
+    }
+
+    fun provideAvatarAnimationRepository(): com.pratyush.scribble.core.network.repository.AvatarAnimationRepository {
+        val current = avatarAnimationRepositoryInstance
+        if (current != null) return current
+        return synchronized(this) {
+            val nested = avatarAnimationRepositoryInstance
+            if (nested != null) {
+                nested
+            } else {
+                val created = com.pratyush.scribble.core.network.repository.FirebaseAvatarAnimationRepository()
+                avatarAnimationRepositoryInstance = created
+                created
+            }
+        }
+    }
+
+    fun setAvatarAnimationRepositoryForTesting(repository: com.pratyush.scribble.core.network.repository.AvatarAnimationRepository?) {
+        avatarAnimationRepositoryInstance = repository
     }
 
     fun setRoomRepositoryForTesting(repository: RoomRepository?) {
