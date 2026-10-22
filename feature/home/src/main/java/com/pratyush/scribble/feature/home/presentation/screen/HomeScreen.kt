@@ -229,6 +229,8 @@ fun HomeScreen(
         // Host Dialog
         if (uiState.isHostRoomDialogOpen) {
             HostRoomDialog(
+                isLoading = uiState.isLoading,
+                errorMessage = uiState.errorMessage,
                 onConfirm = onConfirmHostRoom,
                 onDismiss = onDismissDialogs
             )

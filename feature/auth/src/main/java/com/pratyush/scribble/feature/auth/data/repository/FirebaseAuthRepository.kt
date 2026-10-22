@@ -220,7 +220,27 @@ class FirebaseAuthRepository internal constructor(
                     email = user.email,
                     accountType = resolvedAccountType
                 )) {
-                    is AppResult.Success -> res.data
+                    is AppResult.Success -> {
+                        val profile = res.data
+                        if (!user.isAnonymous && profile.isGuest) {
+                            // User is authenticated as non-anonymous in Firebase Auth, but Firestore document is still GUEST.
+                            // Attempt recovery migration:
+                            val upgradeRes = profileRepository.upgradeGuestToPermanent(user.uid, user.email)
+                            if (upgradeRes is AppResult.Success) {
+                                val refreshed = profileRepository.getProfile(user.uid)
+                                val refreshedProfile = (refreshed as? AppResult.Success)?.data
+                                if (refreshedProfile != null && refreshedProfile.accountType == AccountType.PERMANENT) {
+                                    refreshedProfile
+                                } else {
+                                    profile
+                                }
+                            } else {
+                                profile
+                            }
+                        } else {
+                            profile
+                        }
+                    }
                     else -> fallbackProfile
                 }
             } else {
@@ -332,18 +352,100 @@ class FirebaseAuthRepository internal constructor(
     override suspend fun linkGuestWithGoogle(activityContext: Context): AppResult<UserProfile> =
         linkGuestWithGoogleInternal(activityContext)
 
+    private suspend fun recoverLinkedGuestProfile(currentUser: AuthenticatedFirebaseUser): AppResult<UserProfile> {
+        val uid = currentUser.uid
+        if (profileRepository == null) {
+            val fallback = currentUser.toUserProfile().copy(accountType = AccountType.PERMANENT)
+            _currentUser.value = fallback
+            _authState.value = AuthState.Authenticated(fallback)
+            return AppResult.Success(fallback)
+        }
+
+        // 1. Read existing Firestore profile for the authenticated UID
+        val existingResult = profileRepository.getProfile(uid)
+        val existingProfile = when (existingResult) {
+            is AppResult.Success -> existingResult.data
+            is AppResult.Error -> {
+                logE("Recovery failed: unable to read Firestore profile for $uid: ${existingResult.message}")
+                return AppResult.Error("Failed to read user profile: ${existingResult.message}", existingResult.cause)
+            }
+            is AppResult.Loading -> null
+        }
+
+        if (existingProfile == null) {
+            logE("Recovery failed: profile not found in Firestore for UID $uid")
+            return AppResult.Error("Profile not found in Firestore for UID $uid")
+        }
+
+        // 2. If already PERMANENT, continue normally
+        if (existingProfile.accountType == AccountType.PERMANENT) {
+            _currentUser.value = existingProfile
+            _authState.value = AuthState.Authenticated(existingProfile)
+            startObservingProfile(uid)
+            return AppResult.Success(existingProfile)
+        }
+
+        // 3. If account type is GUEST, retry the intended guest-to-permanent profile migration
+        val upgradeResult = profileRepository.upgradeGuestToPermanent(uid, currentUser.email)
+        if (upgradeResult is AppResult.Error) {
+            logE("Recovery upgrade failed for $uid: ${upgradeResult.message}")
+            // Retain existing profile state so user can safely retry without losing profile/stats
+            _currentUser.value = existingProfile
+            _authState.value = AuthState.Authenticated(existingProfile)
+            startObservingProfile(uid)
+            return AppResult.Error(
+                upgradeResult.message.ifBlank { "Failed to upgrade guest profile in Firestore" },
+                upgradeResult.cause
+            )
+        }
+
+        // 4. Confirm the persisted Firestore profile has accountType == PERMANENT
+        val refreshedResult = profileRepository.getProfile(uid)
+        val refreshedProfile = when (refreshedResult) {
+            is AppResult.Success -> refreshedResult.data
+            is AppResult.Error -> {
+                _currentUser.value = existingProfile
+                _authState.value = AuthState.Authenticated(existingProfile)
+                startObservingProfile(uid)
+                return AppResult.Error(
+                    "Account upgraded, but failed to reload profile: ${refreshedResult.message}",
+                    refreshedResult.cause
+                )
+            }
+            is AppResult.Loading -> null
+        }
+
+        if (refreshedProfile == null || refreshedProfile.accountType != AccountType.PERMANENT) {
+            logE("Recovery verification failed: profile is not PERMANENT in Firestore")
+            _currentUser.value = existingProfile
+            _authState.value = AuthState.Authenticated(existingProfile)
+            startObservingProfile(uid)
+            return AppResult.Error("Profile upgrade could not be verified in Firestore")
+        }
+
+        _currentUser.value = refreshedProfile
+        _authState.value = AuthState.Authenticated(refreshedProfile)
+        startObservingProfile(uid)
+        return AppResult.Success(refreshedProfile)
+    }
+
     private suspend fun linkGuestWithGoogleInternal(activityContext: Context?): AppResult<UserProfile> = withContext(workContext) {
         val currentUser = authDataSource.currentUser
             ?: return@withContext AppResult.Error("No user currently signed in")
 
+        logI("linkGuestWithGoogleInternal starting for uid=${currentUser.uid}, isAnonymous=${currentUser.isAnonymous}")
         if (!currentUser.isAnonymous) {
-            return@withContext signInWithGoogleInternal(activityContext)
+            // Previously linked in Firebase Auth: execute safe recovery without requesting or linking Google credentials again
+            logI("Account is already non-anonymous, recovering linked guest profile for uid=${currentUser.uid}")
+            return@withContext recoverLinkedGuestProfile(currentUser)
         }
 
         val tokenResult = googleIdTokenSource(activityContext)
         if (tokenResult !is AppResult.Success) {
+            logW("Failed to retrieve Google ID token: ${(tokenResult as? AppResult.Error)?.message}")
             return@withContext AppResult.Error((tokenResult as? AppResult.Error)?.message ?: "Failed to retrieve Google ID token")
         }
+        logI("Successfully retrieved Google ID token (length=${tokenResult.data.length})")
 
         val idToken = tokenResult.data.trim()
         if (idToken.isEmpty()) {
@@ -353,30 +455,61 @@ class FirebaseAuthRepository internal constructor(
 
         isExplicitAuthInProgress = true
         try {
+            logI("Linking currentUser with Google ID token...")
             val linkedUser = authDataSource.linkCurrentUserWithGoogleIdToken(idToken) ?: currentUser
             val uid = linkedUser.uid
+            logI("Auth link complete: uid=$uid, isAnonymous=${linkedUser.isAnonymous}")
 
-            val updatedProfile = scope.async {
-                if (profileRepository != null) {
-                    profileRepository.upgradeGuestToPermanent(uid, linkedUser.email)
+            if (profileRepository == null) {
+                val fallbackProfile = linkedUser.toUserProfile().copy(accountType = AccountType.PERMANENT)
+                _currentUser.value = fallbackProfile
+                _authState.value = AuthState.Authenticated(fallbackProfile)
+                return@withContext AppResult.Success(fallbackProfile)
+            }
+
+            // Perform Firestore profile upgrade
+            logI("Upgrading Firestore profile to PERMANENT for uid=$uid...")
+            val upgradeResult = profileRepository.upgradeGuestToPermanent(uid, linkedUser.email)
+            if (upgradeResult is AppResult.Error) {
+                logE("Firestore profile upgrade failed after linking: ${upgradeResult.message}")
+                // Retain existing guest profile in state so user is not signed out or corrupted
+                val existingRes = profileRepository.getProfile(uid)
+                val existingProfile = (existingRes as? AppResult.Success)?.data
+                if (existingProfile != null) {
+                    _currentUser.value = existingProfile
+                    _authState.value = AuthState.Authenticated(existingProfile)
+                    startObservingProfile(uid)
                 }
+                return@withContext AppResult.Error(
+                    upgradeResult.message.ifBlank { "Failed to upgrade guest profile in Firestore" },
+                    upgradeResult.cause
+                )
+            }
 
-                val profile = if (profileRepository != null) {
-                    when (val res = profileRepository.getProfile(uid)) {
-                        is AppResult.Success -> res.data ?: linkedUser.toUserProfile().copy(accountType = AccountType.PERMANENT)
-                        else -> linkedUser.toUserProfile().copy(accountType = AccountType.PERMANENT)
-                    }
-                } else {
-                    linkedUser.toUserProfile().copy(accountType = AccountType.PERMANENT)
+            // Confirm persisted Firestore profile has accountType == PERMANENT
+            logI("Refreshing profile from Firestore to verify PERMANENT...")
+            val refreshedResult = profileRepository.getProfile(uid)
+            val refreshedProfile = when (refreshedResult) {
+                is AppResult.Success -> refreshedResult.data
+                is AppResult.Error -> {
+                    return@withContext AppResult.Error(
+                        "Account linked, but failed to reload profile: ${refreshedResult.message}",
+                        refreshedResult.cause
+                    )
                 }
+                is AppResult.Loading -> null
+            }
 
-                _currentUser.value = profile
-                _authState.value = AuthState.Authenticated(profile)
-                startObservingProfile(uid)
-                profile
-            }.await()
+            if (refreshedProfile == null || refreshedProfile.accountType != AccountType.PERMANENT) {
+                logE("Profile upgrade verification failed for $uid: document is not PERMANENT in Firestore")
+                return@withContext AppResult.Error("Profile upgrade could not be verified in Firestore")
+            }
 
-            AppResult.Success(updatedProfile)
+            logI("Migration successful! Emitting Authenticated state with PERMANENT profile.")
+            _currentUser.value = refreshedProfile
+            _authState.value = AuthState.Authenticated(refreshedProfile)
+            startObservingProfile(uid)
+            AppResult.Success(refreshedProfile)
         } catch (collisionEx: FirebaseAuthUserCollisionException) {
             // Account collision: Google account is already linked to another Firebase user.
             // Requirement 6: Handle collision gracefully, do not delete or overwrite either account, sign into the existing Google account.
@@ -470,6 +603,14 @@ class FirebaseAuthRepository internal constructor(
 
     companion object {
         private const val TAG = "FirebaseAuthRepository"
+
+        private fun logD(message: String) {
+            runCatching { Log.d(TAG, message) }
+        }
+
+        private fun logI(message: String) {
+            runCatching { Log.i(TAG, message) }
+        }
 
         private fun logW(message: String) {
             runCatching { Log.w(TAG, message) }

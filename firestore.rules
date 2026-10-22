@@ -35,6 +35,7 @@ service cloud.firestore {
         ));
 
       // Updating an existing profile: allow updating only displayName, avatarId, preferences, updatedAt, lastSeenAt
+      // Allow valid GUEST -> PERMANENT account upgrade (accountType: 'PERMANENT' and guestAccessStatus: 'PERMANENT')
       // Disallow client manipulation of stats, createdAt, uid, or guest match counters/status
       allow update: if isOwner(userId)
         && request.resource.data.uid == userId
@@ -45,7 +46,11 @@ service cloud.firestore {
         && (!('stats' in resource.data) || request.resource.data.stats == resource.data.stats)
         && (!('createdAt' in resource.data) || request.resource.data.createdAt == resource.data.createdAt)
         && (!('guestMatchesCompleted' in resource.data) || request.resource.data.guestMatchesCompleted == resource.data.guestMatchesCompleted)
-        && (!('guestAccessStatus' in resource.data) || request.resource.data.guestAccessStatus == resource.data.guestAccessStatus)
+        && (!('guestAccessStatus' in resource.data) 
+            || request.resource.data.guestAccessStatus == resource.data.guestAccessStatus
+            || (resource.data.accountType == 'GUEST' 
+                && request.resource.data.accountType == 'PERMANENT' 
+                && request.resource.data.guestAccessStatus == 'PERMANENT'))
         && (!('accountType' in resource.data) 
             || request.resource.data.accountType == resource.data.accountType 
             || (resource.data.accountType == 'GUEST' && request.resource.data.accountType == 'PERMANENT'));

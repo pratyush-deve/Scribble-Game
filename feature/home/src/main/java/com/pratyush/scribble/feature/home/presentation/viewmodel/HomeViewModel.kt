@@ -31,18 +31,23 @@ class HomeViewModel(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
+    private var profileObserveJob: kotlinx.coroutines.Job? = null
+
     init {
         viewModelScope.launch {
             authRepository.currentUser.collect { user ->
                 _uiState.update { it.copy(userProfile = user) }
+                profileObserveJob?.cancel()
                 if (user != null && profileRepository != null) {
-                    launch {
+                    profileObserveJob = launch {
                         profileRepository.observeProfile(user.id).collect { updatedProfile ->
                             if (updatedProfile != null) {
                                 _uiState.update { it.copy(userProfile = updatedProfile) }
                             }
                         }
                     }
+                } else {
+                    profileObserveJob = null
                 }
             }
         }
